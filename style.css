@@ -1,0 +1,131 @@
+/* Color tokens. JS reads a few of these so the canvas matches the theme. */
+:root {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --text: #1f1f1d;
+  --muted: #7a7a7a;
+  --border: #eeeeee;
+  --border-strong: #d5d5d5;
+  --hit: #21bd60;
+  --miss: #ff0000;
+  --cached: rgba(110, 110, 110, 0.487);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1b;
+    --surface: #2a2a28;
+    --text: #ecebe6;
+    --muted: #a3a29b;
+    --border: #3d3d3a;
+    --border-strong: #5f5e5a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+h1 { font-size: 22px; font-weight: 600; margin: 0 0 16px; }
+h2 { font-size: 15px; font-weight: 500; color: var(--muted); margin: 24px 0 8px; }
+.muted { color: var(--muted); font-size: 13px; margin: 0; }
+
+/* A row of controls that wraps on narrow screens */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.row label { font-size: 14px; color: var(--muted); }
+.row input[type="range"] { flex: 1; min-width: 120px; }
+.out { font-size: 14px; min-width: 76px; }
+#speedOut { min-width: 124px; }  /* fits "1,000,000 / frame" so the slider doesn't jump */
+
+button {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+button:hover { background: var(--surface); }
+button:focus-visible { outline: 2px solid var(--hit); outline-offset: 2px; }
+
+.row input[type="number"] {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 5px 8px;
+  width: 80px;
+}
+.row input[type="number"]:focus-visible { outline: 2px solid var(--hit); outline-offset: 2px; }
+
+/* Segmented method picker: the pressed button looks selected */
+.seg { display: flex; gap: 6px; }
+.seg button[aria-pressed="true"] {
+  background: var(--surface);
+  border-color: var(--text);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+.sw.hit { background: var(--hit); }
+.sw.miss { background: var(--miss); }
+.sw.cached { background: var(--cached); }
+
+/* Canvas width follows the page; JS sets the pixel size and height */
+canvas { display: block; width: 100%; margin-top: 10px; }
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.card { background: var(--surface); border-radius: 8px; padding: 12px 16px; }
+.card .label { font-size: 13px; color: var(--muted); }
+.card .value { font-size: 22px; font-weight: 500; }
+
+/* Comparison bars: name | bar | numbers */
+.cmp {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr) 160px;
+  gap: 8px 12px;
+  align-items: center;
+  font-size: 13px;
+}
+.track { height: 12px; background: var(--surface); border-radius: 3px; overflow: hidden; }
+.fill { height: 100%; background: var(--miss); }
+.cmp .num { color: var(--muted); }
+
+@media (max-width: 520px) {
+  .cmp { grid-template-columns: 60px minmax(0, 1fr); }
+  .cmp .num { grid-column: 2; margin-top: -6px; }
+}

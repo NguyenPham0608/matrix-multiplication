@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Matrix multiplication cache simulator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Matrix multiplication cache simulator</h1>
+
+    <!-- Method choice and playback -->
+    <div class="row">
+      <div class="seg" role="group" aria-label="Loop order">
+        <button id="mijk" aria-pressed="true">i, j, k</button>
+        <button id="mikj" aria-pressed="false">i, k, j</button>
+        <button id="mtile" aria-pressed="false">Tiled (T = 4)</button>
+      </div>
+      <label for="size">N</label>
+      <input type="number" id="size" min="2" max="1024" step="1" value="16">
+      <button id="play">Play</button>
+      <button id="step">Step</button>
+      <button id="reset">Reset</button>
+    </div>
+
+    <!-- Sliders -->
+    <div class="row">
+      <label for="speed">Speed</label>
+      <input type="range" id="speed" min="0" max="1000" step="1" value="391">
+      <span id="speedOut" class="out">12 / frame</span>
+
+      <label for="cap">Cache</label>
+      <input type="range" id="cap" min="8" max="64" step="4" value="16">
+      <span id="capOut" class="out">16 lines</span>
+    </div>
+
+    <!-- Legend -->
+    <div class="legend">
+      <span><span class="sw hit"></span>Hit</span>
+      <span><span class="sw miss"></span>Miss</span>
+      <span><span class="sw cached"></span>In cache</span>
+      <span id="dims">Line = 4 values, matrices 16×16</span>
+    </div>
+
+    <!-- The three matrices are drawn here -->
+    <canvas id="cv" aria-label="Grids for matrices A, B and C showing cache hits and misses"></canvas>
+
+    <!-- Live counters -->
+    <div class="cards">
+      <div class="card"><div class="label">Hits</div><div class="value" id="hits">0</div></div>
+      <div class="card"><div class="label">Misses</div><div class="value" id="miss">0</div></div>
+      <div class="card"><div class="label">Hit rate</div><div class="value" id="rate">–</div></div>
+      <div class="card"><div class="label">Progress</div><div class="value" id="prog">0%</div></div>
+    </div>
+    <p id="per" class="muted">Misses by matrix: A 0, B 0, C 0</p>
+
+    <!-- Full-run comparison of all three methods -->
+    <h2>Full run, all three methods, same cache size</h2>
+    <div class="cmp" id="cmp"></div>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
