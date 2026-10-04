@@ -11,6 +11,7 @@
   --accent-text: #ffffff;
   --hit: #21bd60;
   --l2: #f0a020;
+  --l3: #ee6c2c;
   --miss: #ff0000;
   --cached: rgba(110, 110, 110, 0.25);
   --cached1: rgba(110, 110, 110, 0.25);
@@ -59,6 +60,7 @@ kbd:first-child { margin-left: 0; }
 
 body[data-mode="teaching"] .real-only { display: none !important; }
 body[data-mode="real"] .teach-only { display: none !important; }
+body:not([data-hier="3"]) .l3-only { display: none !important; }
 
 /* ---------- Top bar ---------- */
 .topbar {
@@ -204,10 +206,17 @@ input[type="range"] { accent-color: var(--accent); }
 /* ---------- Matrix sizes ---------- */
 .dimgrid {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 12px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr) 12px minmax(0, 1fr) 34px;
   align-items: center;
   gap: 8px 6px;
 }
+.lock { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; color: var(--muted); }
+.lock svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; fill: none; }
+.lock svg rect { fill: currentColor; stroke: none; }
+.lock .shut, .lock[aria-pressed="true"] .open { display: none; }
+.lock[aria-pressed="true"] .shut { display: block; }
+.lock[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.lock[aria-pressed="true"]:hover { background: var(--accent); }
 .matlabel { font-weight: 700; font-size: 14px; }
 .x { color: var(--muted); text-align: center; }
 .status { font-size: 13px; color: var(--muted); margin: 10px 0 0; font-variant-numeric: tabular-nums; }
@@ -227,6 +236,7 @@ input[type="range"] { accent-color: var(--accent); }
 .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 .sw.hit { background: var(--hit); }
 .sw.l2 { background: var(--l2); }
+.sw.l3 { background: var(--l3); }
 .sw.miss { background: var(--miss); }
 .sw.cached { background: var(--cached); }
 .sw.cached1 { background: var(--cached1); }
@@ -265,6 +275,7 @@ details.panel[open] summary { margin-bottom: 12px; }
 .specs tr:last-child th, .specs tr:last-child td { border-bottom: 0; }
 .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 0 7px; border-radius: 6px; margin-right: 4px; }
 .tag.measured { background: color-mix(in srgb, var(--hit) 18%, transparent); color: var(--hit); }
+.tag.illustrative { background: var(--surface-2); color: var(--muted); }
 .tag.assumed { background: color-mix(in srgb, var(--l2) 20%, transparent); color: var(--l2); }
 
 /* ---------- Comparison bars: name | bar | numbers ---------- */

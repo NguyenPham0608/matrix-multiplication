@@ -15,7 +15,8 @@
       </div>
       <div class="seg mode" role="group" aria-label="Simulation mode">
         <button id="modeTeaching" aria-pressed="true">Teaching</button>
-        <button id="modeReal" aria-pressed="false">Real <span class="chip">M5 MacBook Pro</span></button>
+        <button id="modeM5" aria-pressed="false">Real <span class="chip">M5 MacBook Pro</span></button>
+        <button id="modeX86" aria-pressed="false">Real <span class="chip">x86 desktop</span></button>
       </div>
     </div>
   </header>
@@ -48,11 +49,19 @@
           <input type="number" id="aR" min="1" max="1024" step="1" value="16" aria-label="Rows of A">
           <span class="x">×</span>
           <input type="number" id="aC" min="1" max="1024" step="1" value="16" aria-label="Columns of A">
+          <button type="button" class="lock" id="lockA" aria-pressed="false" aria-label="Keep A square" title="Keep A square">
+            <svg class="open" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 5.8-1"/></svg>
+            <svg class="shut" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>
+          </button>
 
           <span class="matlabel">B</span>
           <input type="number" id="bR" min="1" max="1024" step="1" value="16" aria-label="Rows of B">
           <span class="x">×</span>
           <input type="number" id="bC" min="1" max="1024" step="1" value="16" aria-label="Columns of B">
+          <button type="button" class="lock" id="lockB" aria-pressed="false" aria-label="Keep B square" title="Keep B square">
+            <svg class="open" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 5.8-1"/></svg>
+            <svg class="shut" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>
+          </button>
         </div>
         <p id="dimStatus" class="status" role="status"></p>
       </section>
@@ -76,6 +85,7 @@
             <span class="teach-only"><span class="sw cached"></span>In cache</span>
             <span class="real-only"><span class="sw hit"></span>L1 hit</span>
             <span class="real-only"><span class="sw l2"></span>L2 hit</span>
+            <span class="real-only l3-only"><span class="sw l3"></span>L3 hit</span>
             <span class="real-only"><span class="sw miss"></span>DRAM</span>
             <span class="real-only"><span class="sw cached1"></span>In L1</span>
             <span class="real-only"><span class="sw cached2"></span>In L2</span>
@@ -114,17 +124,8 @@
 
       <details class="panel real-only" id="specs" open>
         <summary>What "Real" models</summary>
-        <table class="specs">
-          <tbody>
-            <tr><th>Cache line</th><td>128 B, so 16 doubles</td><td><span class="tag measured">measured</span> <code>hw.cachelinesize</code></td></tr>
-            <tr><th>L1 data</th><td>128 KB, 8-way</td><td><span class="tag measured">size measured</span> <span class="tag assumed">ways assumed</span></td></tr>
-            <tr><th>L2</th><td>16 MB, 8-way</td><td><span class="tag measured">size measured</span> <span class="tag assumed">ways assumed</span></td></tr>
-            <tr><th>Replacement</th><td>LRU in every set</td><td><span class="tag assumed">assumed</span> real chips approximate LRU</td></tr>
-            <tr><th>Cost per access</th><td>L1 ≈ 4, L2 ≈ 18, DRAM ≈ 350 cycles</td><td><span class="tag assumed">rough estimates</span></td></tr>
-            <tr><th>Not modeled</th><td colspan="2">hardware prefetching, TLB, write-back of dirty lines, overlapping misses, SIMD, the system-level cache, other cores</td></tr>
-          </tbody>
-        </table>
-        <p class="muted">Sizes come from <code>sysctl</code> on an M5 (performance-core values). Matrices are 8-byte doubles, stored row by row, each starting on a fresh line. Because sets are picked by address, power-of-two row lengths like 512 make a column of B land in just a few sets, which causes conflict misses that the fully associative teaching cache can't show.</p>
+        <table class="specs"><tbody id="specsBody"></tbody></table>
+        <p class="muted" id="specsNote"></p>
       </details>
     </div>
   </main>

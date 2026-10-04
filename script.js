@@ -1,23 +1,69 @@
 // ---------- Settings ----------
-// Teaching mode is a small fully associative cache that is easy to follow. Real mode models the
-// performance cores of an Apple M5: 128-byte lines holding 16 doubles, an 8-way L1 data cache of
-// 128 KB and an 8-way L2 of 16 MB. Line size and cache sizes come from `sysctl` on an M5; the
-// number of ways and the cycle costs are assumptions.
+// Teaching mode is a small fully associative cache that is easy to follow. The two real modes are
+// hierarchies of set-associative LRU caches. The M5 line size and cache sizes come from `sysctl`
+// on an M5, and the x86 numbers are round figures typical of a desktop chip. Ways and cycle costs
+// are assumptions. An access's outcome is the index of the level that had the line, one past the
+// last level meaning main memory, and it is also the position in names, colors and cycles.
+const tag = (kind, text) => `<span class="tag ${kind}">${text}</span>`;
 const MODES = {
   teaching: {
+    kind: 'teaching',
     L: 4,
     defaultN: 16, maxN: 1024,             // starting size of every dimension, largest allowed
     tiles: [2, 4, 8], defaultT: 4,
+    levels: null,
+    names: ['Hit', 'Miss'],
+    colors: ['--hit', '--miss'],
     blurb: 'A tiny fully associative LRU cache, 4 values per line, so every hit and miss is easy to see.',
   },
-  real: {
-    L: 16,                                 // 128-byte line of 8-byte doubles
+  m5: {
+    kind: 'real',
+    L: 16, lineBytes: 128,                 // 128-byte line of 8-byte doubles
     defaultN: 256, maxN: 512,
     tiles: [8, 16, 32, 64, 128], defaultT: 32,
-    l1: { sets: 128, ways: 8 },            // 128 sets x 8 ways x 128 B = 128 KB
-    l2: { sets: 16384, ways: 8 },          // 16384 sets x 8 ways x 128 B = 16 MB
+    levels: [
+      { sets: 128, ways: 8 },              // 128 sets x 8 ways x 128 B = 128 KB
+      { sets: 16384, ways: 8 },            // 16384 sets x 8 ways x 128 B = 16 MB
+    ],
     cycles: [4, 18, 350],                  // rough cost of an L1 hit, an L2 hit and a DRAM access
+    names: ['L1', 'L2', 'DRAM'],
+    colors: ['--hit', '--l2', '--miss'],
+    summary: 'L1 128 KB, L2 16 MB',
     blurb: 'An L1 + L2 hierarchy shaped like an M5 performance core: 128-byte lines, set-associative, LRU.',
+    specs: [
+      ['Cache line', '128 B, so 16 doubles', `${tag('measured', 'measured')} <code>hw.cachelinesize</code>`],
+      ['L1 data', '128 KB, 8-way', `${tag('measured', 'size measured')} ${tag('assumed', 'ways assumed')}`],
+      ['L2', '16 MB, 8-way', `${tag('measured', 'size measured')} ${tag('assumed', 'ways assumed')}`],
+      ['L3', 'none', 'macOS reports no L3; the system-level cache is not modeled'],
+      ['Replacement', 'LRU in every set', `${tag('assumed', 'assumed')} real chips approximate LRU`],
+      ['Cost per access', 'L1 ≈ 4, L2 ≈ 18, DRAM ≈ 350 cycles', tag('assumed', 'rough estimates')],
+    ],
+    note: 'Sizes come from <code>sysctl</code> on an M5 (performance-core values). Matrices are 8-byte doubles, stored row by row, each starting on a fresh line. Because sets are picked by address, power-of-two row lengths like 512 make a column of B land in just a few sets, which causes conflict misses that the fully associative teaching cache can\'t show.',
+  },
+  x86: {
+    kind: 'real',
+    L: 8, lineBytes: 64,
+    defaultN: 256, maxN: 512,
+    tiles: [8, 16, 32, 64, 128], defaultT: 32,
+    levels: [
+      { sets: 64, ways: 8 },               // 64 sets x 8 ways x 64 B = 32 KB
+      { sets: 1024, ways: 8 },             // 1024 sets x 8 ways x 64 B = 512 KB
+      { sets: 32768, ways: 16 },           // 32768 sets x 16 ways x 64 B = 32 MB
+    ],
+    cycles: [4, 14, 45, 250],
+    names: ['L1', 'L2', 'L3', 'DRAM'],
+    colors: ['--hit', '--l2', '--l3', '--miss'],
+    summary: 'L1 32 KB, L2 512 KB, L3 32 MB',
+    blurb: 'An L1 + L2 + L3 hierarchy with round numbers typical of an x86 desktop chip: 64-byte lines, set-associative, LRU.',
+    specs: [
+      ['Cache line', '64 B, so 8 doubles', tag('illustrative', 'typical')],
+      ['L1 data', '32 KB, 8-way', tag('illustrative', 'typical')],
+      ['L2', '512 KB, 8-way', tag('illustrative', 'typical')],
+      ['L3', '32 MB, 16-way', `${tag('illustrative', 'typical')} shared by all cores on a real chip`],
+      ['Replacement', 'LRU in every set', `${tag('assumed', 'assumed')} real chips approximate LRU`],
+      ['Cost per access', 'L1 ≈ 4, L2 ≈ 14, L3 ≈ 45, DRAM ≈ 250 cycles', tag('assumed', 'rough estimates')],
+    ],
+    note: 'These are illustrative round numbers, not one specific processor, and they were not measured on this machine. With a 512 KB L2, the three matrices stop fitting at moderate sizes, which is when the L3 starts to matter. The L3 is too big to draw, so it only shows up in the counters.',
   },
 };
 
@@ -34,6 +80,7 @@ function layoutFor(M, K, P, L) {
 
 // ---------- State ----------
 let mode = 'teaching';
+const isReal = () => MODES[mode].kind === 'real';
 let L = MODES.teaching.L;
 let T = MODES.teaching.defaultT;
 let M = 16, K = 16, P = 16; // A is M×K, B is K×P, C is M×P, set from the page
@@ -45,8 +92,8 @@ let chunk = null;
 let chunkLen = 0, chunkPos = 0;
 let total = 0;
 let pos = 0;
-let sim = null;            // the simulated cache: { touch(line) -> level, l1, l2 }
-let counts = [0, 0, 0];    // accesses served by L1, L2, DRAM (teaching: hit, unused, miss)
+let sim = null;            // the simulated cache: { touch(line) -> outcome, caches }
+let counts = [];           // accesses per outcome: one slot per level, then main memory
 let perMatrix = [0, 0, 0];
 let playing = false;
 let speed = 12;            // accesses per animation frame; below 1 means one access every 1/speed frames
@@ -57,15 +104,11 @@ let dirty = true;
 let lastTime = null;
 const RECENT = 4096;
 const recentAddr = new Int32Array(RECENT);
-const recentHit = new Uint8Array(RECENT);  // which level served access t: 0 = L1, 1 = L2, 2 = DRAM
+const recentHit = new Uint8Array(RECENT);  // outcome of access t
 
 // Everything the simulation needs, in a form that can be posted to a worker
 function config() {
-  const m = MODES[mode];
-  return {
-    mode, L, T, M, K, P, cap: CAP,
-    l1Sets: m.l1?.sets, l1Ways: m.l1?.ways, l2Sets: m.l2?.sets, l2Ways: m.l2?.ways,
-  };
+  return { levels: MODES[mode].levels, L, T, M, K, P, cap: CAP };
 }
 
 // ---------- 1. Build the access sequence ----------
@@ -198,17 +241,19 @@ class SetAssoc {
   }
 }
 
-// Builds the cache for a run. touch(line) returns which level served the access:
-// 0 = L1 (or a hit in teaching mode), 1 = L2, 2 = DRAM (or a miss in teaching mode).
+// Builds the caches for a run. touch(line) returns the outcome. A level that misses loads the
+// line, so by the time a lower level hits, every level above already holds it. Two or three levels.
 function makeSim(cfg, nLines) {
-  if (cfg.mode === 'teaching') {
-    const l1 = new LRU(nLines, cfg.cap);
-    return { l1, l2: null, touch: line => (l1.access(line) ? 0 : 2) };
+  if (!cfg.levels) {
+    const c = new LRU(nLines, cfg.cap);
+    return { caches: [c], touch: line => (c.access(line) ? 0 : 1) };
   }
-  const l1 = new SetAssoc(cfg.l1Sets, cfg.l1Ways);
-  const l2 = new SetAssoc(cfg.l2Sets, cfg.l2Ways);
-  // L2 only sees what L1 missed, which is how a real hierarchy is fed
-  return { l1, l2, touch: line => (l1.access(line) ? 0 : l2.access(line) ? 1 : 2) };
+  const caches = cfg.levels.map(l => new SetAssoc(l.sets, l.ways));
+  const [a, b, c] = caches;
+  const touch = caches.length === 2
+    ? line => (a.access(line) ? 0 : b.access(line) ? 1 : 2)
+    : line => (a.access(line) ? 0 : b.access(line) ? 1 : c.access(line) ? 2 : 3);
+  return { caches, touch };
 }
 
 function fullRun(m, cfg) {
@@ -216,7 +261,7 @@ function fullRun(m, cfg) {
   const lay = layoutFor(cfg.M, cfg.K, cfg.P, L);
   const touch = makeSim(cfg, lay.end / L).touch;
   const buf = new Int32Array(2 * Math.max(cfg.K, cfg.P) + 1);
-  const counts = [0, 0, 0];
+  const counts = new Array((cfg.levels ? cfg.levels.length : 1) + 1).fill(0);
   let done = 0, nextReport = 0;
   for (const n of accessChunks(m, lay, buf, L, cfg.T)) {
     for (let q = 0; q < n; q++) counts[touch(Math.floor(buf[q] / L))]++;
@@ -257,12 +302,12 @@ function startComparison() {
   renderComparison();
 }
 
-const cyclesOf = c => c[0] * MODES.real.cycles[0] + c[1] * MODES.real.cycles[1] + c[2] * MODES.real.cycles[2];
+const cyclesOf = c => c.reduce((sum, n, i) => sum + n * MODES[mode].cycles[i], 0);
 
 function renderComparison() {
-  const real = mode === 'real';
+  const real = isReal(), def = MODES[mode];
   const done = runs.filter(r => r.counts);
-  const score = r => (real ? cyclesOf(r.counts) : r.counts[2]);
+  const score = r => (real ? cyclesOf(r.counts) : r.counts[1]);
   const max = Math.max(1, ...done.map(score));
   const pct = (a, b) => (a / b * 100).toFixed(1) + '%';
 
@@ -271,24 +316,17 @@ function renderComparison() {
     : 'Full run, all three methods, same cache size';
 
   document.getElementById('cmp').innerHTML = runs.map(r => {
-    if (!r.counts) return `
-      <span class="name${r.m === method ? ' current' : ''}">${r.name}</span>
-      <div class="track"></div>
-      <span class="num">running, ${percent(r.done / r.total)}</span>`;
+    const name = `<span class="name${r.m === method ? ' current' : ''}">${r.name}</span>`;
+    if (!r.counts) return `${name}<div class="track"></div><span class="num">running, ${percent(r.done / r.total)}</span>`;
     const c = r.counts;
-    if (!real) return `
-      <span class="name${r.m === method ? ' current' : ''}">${r.name}</span>
-      <div class="track"><div class="fill" style="width:${Math.max(0.5, c[2] / max * 100).toFixed(1)}%"></div></div>
-      <span class="num">${c[2].toLocaleString()} misses, ${pct(c[0], r.total)} hits</span>`;
-    const part = (n, i) => `${(n * MODES.real.cycles[i] / max * 100).toFixed(2)}%`;
-    return `
-      <span class="name${r.m === method ? ' current' : ''}">${r.name}</span>
-      <div class="track">
-        <div class="fill" style="width:${part(c[0], 0)};background:var(--hit)"></div>
-        <div class="fill" style="width:${part(c[1], 1)};background:var(--l2)"></div>
-        <div class="fill" style="width:${part(c[2], 2)}"></div>
-      </div>
-      <span class="num">L1 ${pct(c[0], r.total)} · L2 ${pct(c[1], r.total)} · DRAM ${pct(c[2], r.total)}<br>about ${(cyclesOf(c) / r.total).toFixed(1)} cycles per access</span>`;
+    if (!real) return `${name}
+      <div class="track"><div class="fill" style="width:${Math.max(0.5, c[1] / max * 100).toFixed(1)}%"></div></div>
+      <span class="num">${c[1].toLocaleString()} misses, ${pct(c[0], r.total)} hits</span>`;
+    const segments = c.map((n, i) =>
+      `<div class="fill" style="width:${(n * def.cycles[i] / max * 100).toFixed(2)}%;background:var(${def.colors[i]})"></div>`).join('');
+    return `${name}
+      <div class="track">${segments}</div>
+      <span class="num">${def.names.map((nm, i) => `${nm} ${pct(c[i], r.total)}`).join(' · ')}<br>about ${(cyclesOf(c) / r.total).toFixed(1)} cycles per access</span>`;
   }).join('');
 }
 
@@ -312,7 +350,8 @@ function reset() {
   total = totalAccesses(method, M, K, P, T);
   pos = 0;
   sim = makeSim(config(), lay.end / L);
-  counts = [0, 0, 0]; perMatrix = [0, 0, 0];
+  counts = new Array(MODES[mode].names.length).fill(0);
+  perMatrix = [0, 0, 0];
   lastTime.fill(-1);
   updateStats();
   dirty = true;
@@ -335,25 +374,28 @@ function advance(n) {
   dirty = true;
 }
 
-const CARDS = {
-  teaching: [
+const hitRate = () => (pos ? (counts[0] / pos * 100).toFixed(1) + '%' : '–');
+function cardsFor(m) {
+  const names = MODES[m].names, mem = names.length - 1;
+  if (MODES[m].kind === 'teaching') return [
     ['Hits', () => counts[0].toLocaleString()],
-    ['Misses', () => counts[2].toLocaleString()],
-    ['Hit rate', () => (pos ? (counts[0] / pos * 100).toFixed(1) + '%' : '–')],
+    ['Misses', () => counts[1].toLocaleString()],
+    ['Hit rate', hitRate],
     ['Progress', () => percent(pos / total)],
-  ],
-  real: [
-    ['L1 hits', () => counts[0].toLocaleString()],
-    ['L2 hits', () => counts[1].toLocaleString()],
-    ['DRAM accesses', () => counts[2].toLocaleString()],
-    ['L1 hit rate', () => (pos ? (counts[0] / pos * 100).toFixed(1) + '%' : '–')],
+  ];
+  return [
+    ...names.slice(0, mem).map((nm, i) => [`${nm} hits`, () => counts[i].toLocaleString()]),
+    ['DRAM accesses', () => counts[mem].toLocaleString()],
+    ['L1 hit rate', hitRate],
     ['Cycles / access', () => (pos ? (cyclesOf(counts) / pos).toFixed(1) : '–')],
     ['Progress', () => percent(pos / total)],
-  ],
-};
+  ];
+}
+let cards = [];
 
 function buildCards() {
-  document.getElementById('cards').innerHTML = CARDS[mode]
+  cards = cardsFor(mode);
+  document.getElementById('cards').innerHTML = cards
     .map(([label], i) => `<div class="card"><div class="label">${label}</div><div class="value" id="card${i}">0</div></div>`)
     .join('');
 }
@@ -361,13 +403,13 @@ function buildCards() {
 function updateStats() {
   document.getElementById('progFill').style.width = (total ? pos / total * 100 : 0) + '%';
   // share of accesses served by each level, in the same colors as the grids
-  const colors = ['var(--hit)', 'var(--l2)', 'var(--miss)'];
+  const colors = MODES[mode].colors.map(c => `var(${c})`);
   document.getElementById('share').innerHTML = pos
     ? counts.map((c, i) => `<span style="width:${c / pos * 100}%;background:${colors[i]}"></span>`).join('')
     : '';
-  CARDS[mode].forEach(([, get], i) => { document.getElementById('card' + i).textContent = get(); });
+  cards.forEach(([, get], i) => { document.getElementById('card' + i).textContent = get(); });
   document.getElementById('per').textContent =
-    `${mode === 'real' ? 'L1 misses' : 'Misses'} by matrix: A ${perMatrix[0].toLocaleString()}, B ${perMatrix[1].toLocaleString()}, C ${perMatrix[2].toLocaleString()}`;
+    `${isReal() ? 'L1 misses' : 'Misses'} by matrix: A ${perMatrix[0].toLocaleString()}, B ${perMatrix[1].toLocaleString()}, C ${perMatrix[2].toLocaleString()}`;
 }
 
 // ---------- 5. Drawing ----------
@@ -398,8 +440,8 @@ function draw() {
   const css = getComputedStyle(document.documentElement);
   const color = name => css.getPropertyValue(name).trim();
   const muted = color('--muted'), border = color('--border-strong');
-  const hitColors = [color('--hit'), color('--l2'), color('--miss')];
-  const real = mode === 'real';
+  const hitColors = MODES[mode].colors.map(color);
+  const real = isReal();
   const { rows, cols, base } = lay;
 
   ctx.clearRect(0, 0, W, cv.height);
@@ -445,10 +487,10 @@ function draw() {
 
     if (real && lay.end / L <= L2_DRAW_MAX) {
     ctx.fillStyle = color('--cached2');
-    for (const line of sim.l2.lines()) fillLine(line);
+    for (const line of sim.caches[1].lines()) fillLine(line);
   }
   ctx.fillStyle = color(real ? '--cached1' : '--cached');
-  for (const line of sim.l1.lines()) fillLine(line);
+  for (const line of sim.caches[0].lines()) fillLine(line);
 
   // recently accessed: colored by who served it, fading with age. Oldest first, and each cell
   // only for its latest access.
@@ -521,8 +563,9 @@ const dimIn = ['aR', 'aC', 'bR', 'bC'].map(id => document.getElementById(id));
 const dimStatus = document.getElementById('dimStatus');
 function updateDims() {
   const sz = (r, c) => `${r}×${c}`;
-  document.getElementById('dims').textContent = mode === 'real'
-    ? `Line = ${L} doubles (128 B) · A ${fmtBytes(M * K * 8)}, B ${fmtBytes(K * P * 8)}, C ${fmtBytes(M * P * 8)}, total ${fmtBytes((M * K + K * P + M * P) * 8)} · L1 128 KB, L2 16 MB`
+  const def = MODES[mode];
+  document.getElementById('dims').textContent = isReal()
+    ? `Line = ${L} doubles (${def.lineBytes} B) · A ${fmtBytes(M * K * 8)}, B ${fmtBytes(K * P * 8)}, C ${fmtBytes(M * P * 8)}, total ${fmtBytes((M * K + K * P + M * P) * 8)} · ${def.summary}`
     : `Line = ${L} values · A ${sz(M, K)}, B ${sz(K, P)}, C ${sz(M, P)}`;
 }
 
@@ -554,12 +597,44 @@ function setSize() {
   reset();
   startComparison();
 }
-const [aRIn, aCIn, bRIn, bCIn] = dimIn;
+const lockA = document.getElementById('lockA'), lockB = document.getElementById('lockB');
+const byId = Object.fromEntries(dimIn.map(el => [el.id, el]));
+
+// Boxes that must hold the same number: A's columns and B's rows always, plus the two sides of a
+// matrix whose lock is on. Setting one box carries the number through everything tied to it.
+function propagate(from) {
+  const pairs = [['aC', 'bR']];
+  if (lockA.getAttribute('aria-pressed') === 'true') pairs.push(['aR', 'aC']);
+  if (lockB.getAttribute('aria-pressed') === 'true') pairs.push(['bR', 'bC']);
+  const todo = [from];
+  while (todo.length) {
+    const id = todo.pop();
+    for (const [x, y] of pairs) {
+      const other = id === x ? y : id === y ? x : null;
+      if (other && byId[other].value !== byId[id].value) {
+        byId[other].value = byId[id].value;
+        todo.push(other);
+      }
+    }
+  }
+}
 dimIn.forEach(el => el.addEventListener('change', () => {
-  if (el === aCIn) bRIn.value = aCIn.value;
-  if (el === bRIn) aCIn.value = bRIn.value;
+  propagate(el.id);
   setSize();
 }));
+
+// Turning a lock on squares that matrix right away, from the box that is shared with the other matrix
+for (const [btn, shared, other] of [[lockA, 'aC', 'aR'], [lockB, 'bR', 'bC']]) {
+  btn.addEventListener('click', () => {
+    const on = btn.getAttribute('aria-pressed') !== 'true';
+    btn.setAttribute('aria-pressed', String(on));
+    if (on) {
+      byId[other].value = byId[shared].value;
+      propagate(other);
+      setSize();
+    }
+  });
+}
 
 const tileSel = document.getElementById('tile');
 tileSel.addEventListener('change', () => {
@@ -588,13 +663,18 @@ document.getElementById('cap').addEventListener('input', e => {
 });
 
 // Switching modes swaps the cache model, the line size and sensible defaults for the matrix sizes and the tile size
+const MODE_BUTTONS = { teaching: 'modeTeaching', m5: 'modeM5', x86: 'modeX86' };
 function setMode(next) {
   mode = next;
   const m = MODES[mode];
-  document.body.dataset.mode = mode;
-  document.getElementById('modeTeaching').setAttribute('aria-pressed', String(mode === 'teaching'));
-  document.getElementById('modeReal').setAttribute('aria-pressed', String(mode === 'real'));
+  document.body.dataset.mode = m.kind;
+  document.body.dataset.hier = m.levels ? m.levels.length : 1;
+  for (const [k, id] of Object.entries(MODE_BUTTONS))
+    document.getElementById(id).setAttribute('aria-pressed', String(k === mode));
   document.getElementById('modeBlurb').textContent = m.blurb;
+  document.getElementById('specsBody').innerHTML = (m.specs || [])
+    .map(([label, value, source]) => `<tr><th>${label}</th><td>${value}</td><td>${source}</td></tr>`).join('');
+  document.getElementById('specsNote').innerHTML = m.note || '';
   L = m.L;
   T = m.defaultT;
   dimIn.forEach(el => { el.max = m.maxN; el.value = m.defaultN; });
@@ -603,8 +683,8 @@ function setMode(next) {
   setMethod(method, false);
   setSize();
 }
-document.getElementById('modeTeaching').addEventListener('click', () => mode !== 'teaching' && setMode('teaching'));
-document.getElementById('modeReal').addEventListener('click', () => mode !== 'real' && setMode('real'));
+for (const [k, id] of Object.entries(MODE_BUTTONS))
+  document.getElementById(id).addEventListener('click', () => mode !== k && setMode(k));
 
 window.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest('input, select, textarea, button, summary')) return;
