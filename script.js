@@ -14,7 +14,7 @@ const MODES = {
     levels: null,
     names: ['Hit', 'Miss'],
     colors: ['--hit', '--miss'],
-    blurb: 'A tiny fully associative LRU cache, 4 values per line, so every hit and miss is easy to see.',
+    blurb: 'Tiny fully associative LRU cache. 4 values per line.',
   },
   m5: {
     kind: 'real',
@@ -29,7 +29,7 @@ const MODES = {
     names: ['L1', 'L2', 'DRAM'],
     colors: ['--hit', '--l2', '--miss'],
     summary: 'L1 128 KB, L2 16 MB',
-    blurb: 'An L1 + L2 hierarchy shaped like an M5 performance core: 128-byte lines, set-associative, LRU.',
+    blurb: 'L1 + L2 like an M5 performance core. 128 B lines, set-associative, LRU.',
     specs: [
       ['Cache line', '128 B, so 16 doubles', `${tag('measured', 'measured')} <code>hw.cachelinesize</code>`],
       ['L1 data', '128 KB, 8-way', `${tag('measured', 'size measured')} ${tag('assumed', 'ways assumed')}`],
@@ -54,7 +54,7 @@ const MODES = {
     names: ['L1', 'L2', 'L3', 'DRAM'],
     colors: ['--hit', '--l2', '--l3', '--miss'],
     summary: 'L1 32 KB, L2 512 KB, L3 32 MB',
-    blurb: 'An L1 + L2 + L3 hierarchy with round numbers typical of an x86 desktop chip: 64-byte lines, set-associative, LRU.',
+    blurb: 'L1 + L2 + L3 like a typical x86 desktop. 64 B lines, set-associative, LRU.',
     specs: [
       ['Cache line', '64 B, so 8 doubles', tag('illustrative', 'typical')],
       ['L1 data', '32 KB, 8-way', tag('illustrative', 'typical')],
@@ -67,7 +67,7 @@ const MODES = {
   },
 };
 
-const METHODS = [['Basic', 'ijk'], ['Reordering', 'ikj'], ['Tiled', 'tile']];
+const METHODS = [['Naive', 'ijk'], ['Reordered', 'ikj'], ['Tiled', 'tile']];
 
 // Where each matrix sits in memory, counted in values. A is M×K, B is K×P and C is M×P, stored
 // row by row. Each starts on a fresh cache line, so a matrix's size is rounded up to a whole line.
@@ -311,22 +311,20 @@ function renderComparison() {
   const max = Math.max(1, ...done.map(score));
   const pct = (a, b) => (a / b * 100).toFixed(1) + '%';
 
-  document.getElementById('cmpTitle').textContent = real
-    ? 'Full run, all three methods, estimated memory time'
-    : 'Full run, all three methods, same cache size';
+  document.getElementById('cmpTitle').textContent = real ? 'Full run · memory time' : 'Full run · misses';
 
   document.getElementById('cmp').innerHTML = runs.map(r => {
     const name = `<span class="name${r.m === method ? ' current' : ''}">${r.name}</span>`;
-    if (!r.counts) return `${name}<div class="track"></div><span class="num">running, ${percent(r.done / r.total)}</span>`;
+    if (!r.counts) return `${name}<div class="track"></div><span class="num">${percent(r.done / r.total)}</span>`;
     const c = r.counts;
     if (!real) return `${name}
       <div class="track"><div class="fill" style="width:${Math.max(0.5, c[1] / max * 100).toFixed(1)}%"></div></div>
-      <span class="num">${c[1].toLocaleString()} misses, ${pct(c[0], r.total)} hits</span>`;
+      <span class="num">${c[1].toLocaleString()} misses · ${pct(c[0], r.total)} hit</span>`;
     const segments = c.map((n, i) =>
       `<div class="fill" style="width:${(n * def.cycles[i] / max * 100).toFixed(2)}%;background:var(${def.colors[i]})"></div>`).join('');
     return `${name}
       <div class="track">${segments}</div>
-      <span class="num">${def.names.map((nm, i) => `${nm} ${pct(c[i], r.total)}`).join(' · ')}<br>about ${(cyclesOf(c) / r.total).toFixed(1)} cycles per access</span>`;
+      <span class="num">${def.names.map((nm, i) => `${nm} ${pct(c[i], r.total)}`).join(' · ')}<br>${(cyclesOf(c) / r.total).toFixed(1)} cycles / access</span>`;
   }).join('');
 }
 
@@ -385,7 +383,7 @@ function cardsFor(m) {
   ];
   return [
     ...names.slice(0, mem).map((nm, i) => [`${nm} hits`, () => counts[i].toLocaleString()]),
-    ['DRAM accesses', () => counts[mem].toLocaleString()],
+    ['DRAM', () => counts[mem].toLocaleString()],
     ['L1 hit rate', hitRate],
     ['Cycles / access', () => (pos ? (cyclesOf(counts) / pos).toFixed(1) : '–')],
     ['Progress', () => percent(pos / total)],
@@ -409,7 +407,7 @@ function updateStats() {
     : '';
   cards.forEach(([, get], i) => { document.getElementById('card' + i).textContent = get(); });
   document.getElementById('per').textContent =
-    `${isReal() ? 'L1 misses' : 'Misses'} by matrix: A ${perMatrix[0].toLocaleString()}, B ${perMatrix[1].toLocaleString()}, C ${perMatrix[2].toLocaleString()}`;
+    `${isReal() ? 'L1 misses' : 'Misses'} · A ${perMatrix[0].toLocaleString()} · B ${perMatrix[1].toLocaleString()} · C ${perMatrix[2].toLocaleString()}`;
 }
 
 // ---------- 5. Drawing ----------
@@ -532,7 +530,7 @@ function loop() {
 // ---------- 7. Controls ----------
 const playBtn = document.getElementById('play');
 function updatePlayButton() {
-  playBtn.textContent = playing ? 'Pause' : pos > 0 && pos < total ? 'Resume' : 'Play';
+  playBtn.textContent = playing ? 'Pause' : 'Play';
   playBtn.dataset.state = playing ? 'playing' : 'paused';
 }
 
@@ -562,11 +560,10 @@ document.getElementById('mtile').addEventListener('click', () => setMethod('tile
 const dimIn = ['aR', 'aC', 'bR', 'bC'].map(id => document.getElementById(id));
 const dimStatus = document.getElementById('dimStatus');
 function updateDims() {
-  const sz = (r, c) => `${r}×${c}`;
   const def = MODES[mode];
   document.getElementById('dims').textContent = isReal()
-    ? `Line = ${L} doubles (${def.lineBytes} B) · A ${fmtBytes(M * K * 8)}, B ${fmtBytes(K * P * 8)}, C ${fmtBytes(M * P * 8)}, total ${fmtBytes((M * K + K * P + M * P) * 8)} · ${def.summary}`
-    : `Line = ${L} values · A ${sz(M, K)}, B ${sz(K, P)}, C ${sz(M, P)}`;
+    ? `${L} doubles per line · ${fmtBytes((M * K + K * P + M * P) * 8)} of matrices · ${def.summary}`
+    : `${L} values per line`;
 }
 
 // Reads the four size boxes. Valid sizes rebuild the run; otherwise the page says why not and the
@@ -575,9 +572,9 @@ function setSize() {
   const max = MODES[mode].maxN;
   const [aR, aC, bR, bC] = dimIn.map(el => Math.round(+el.value));
   const problem = ![aR, aC, bR, bC].every(v => v >= 1 && v <= max)
-    ? `Every dimension must be a whole number from 1 to ${max}.`
+    ? `Sizes must be 1 to ${max}.`
     : aC !== bR
-      ? `A can't be multiplied by B: A has ${aC} columns but B has ${bR} rows. They must match.`
+      ? `A's columns (${aC}) must match B's rows (${bR}).`
       : '';
   dimStatus.textContent = problem;
   dimStatus.classList.toggle('bad', !!problem);
@@ -649,7 +646,7 @@ const speedIn = document.getElementById('speed');
 function setSpeed() {
   const s = SPEED_MIN * Math.pow(SPEED_MAX / SPEED_MIN, speedIn.value / speedIn.max);
   speed = s >= 1 ? Math.round(s) : 1 / Math.round(1 / s);
-  const text = speed >= 1 ? speed.toLocaleString() + ' / frame' : '1 per ' + Math.round(1 / speed) + ' frames';
+  const text = speed >= 1 ? speed.toLocaleString() + ' / frame' : '1 / ' + Math.round(1 / speed) + ' frames';
   document.getElementById('speedOut').textContent = text;
   speedIn.setAttribute('aria-valuetext', text);
   dirty = true;
