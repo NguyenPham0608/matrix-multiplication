@@ -1,10 +1,13 @@
 // ---------- Settings ----------
-// Teaching mode is a small fully associative cache that is easy to follow. The two real modes are
-// hierarchies of set-associative LRU caches. The M5 line size and cache sizes come from `sysctl`
-// on an M5, and the x86 numbers are round figures typical of a desktop chip. Ways and cycle costs
-// are assumptions. An access's outcome is the index of the level that had the line, one past the
-// last level meaning main memory, and it is also the position in names, colors and cycles.
+// Teaching mode is a small fully associative cache that is easy to follow. Every hardware model is
+// a hierarchy of set-associative LRU caches built from published cache sizes. Associativity and
+// cycle costs are assumptions unless marked measured. An access's outcome is the index of the
+// level that had the line, one past the last level meaning main memory, and it is also the
+// position in names, colors and cycles.
 const tag = (kind, text) => `<span class="tag ${kind}">${text}</span>`;
+const KB = 1024, MB = 1024 * KB;
+const LEVEL_COLORS = ['--hit', '--l2', '--l3'];
+
 const MODES = {
   teaching: {
     kind: 'teaching',
@@ -14,60 +17,82 @@ const MODES = {
     levels: null,
     names: ['Hit', 'Miss'],
     colors: ['--hit', '--miss'],
-    blurb: 'Tiny fully associative LRU cache. 4 values per line.',
-  },
-  m5: {
-    kind: 'real',
-    L: 16, lineBytes: 128,                 // 128-byte line of 8-byte doubles
-    defaultN: 256, maxN: 512,
-    tiles: [8, 16, 32, 64, 128], defaultT: 32,
-    levels: [
-      { sets: 128, ways: 8 },              // 128 sets x 8 ways x 128 B = 128 KB
-      { sets: 16384, ways: 8 },            // 16384 sets x 8 ways x 128 B = 16 MB
-    ],
-    cycles: [4, 18, 350],                  // rough cost of an L1 hit, an L2 hit and a DRAM access
-    names: ['L1', 'L2', 'DRAM'],
-    colors: ['--hit', '--l2', '--miss'],
-    summary: 'L1 128 KB, L2 16 MB',
-    blurb: 'L1 + L2 like an M5 performance core. 128 B lines, set-associative, LRU.',
-    specs: [
-      ['Cache line', '128 B, so 16 doubles', `${tag('measured', 'measured')} <code>hw.cachelinesize</code>`],
-      ['L1 data', '128 KB, 8-way', `${tag('measured', 'size measured')} ${tag('assumed', 'ways assumed')}`],
-      ['L2', '16 MB, 8-way', `${tag('measured', 'size measured')} ${tag('assumed', 'ways assumed')}`],
-      ['L3', 'none', 'macOS reports no L3; the system-level cache is not modeled'],
-      ['Replacement', 'LRU in every set', `${tag('assumed', 'assumed')} real chips approximate LRU`],
-      ['Cost per access', 'L1 ≈ 4, L2 ≈ 18, DRAM ≈ 350 cycles', tag('assumed', 'rough estimates')],
-    ],
-    note: 'Sizes come from <code>sysctl</code> on an M5 (performance-core values). Matrices are 8-byte doubles, stored row by row, each starting on a fresh line. Because sets are picked by address, power-of-two row lengths like 512 make a column of B land in just a few sets, which causes conflict misses that the fully associative teaching cache can\'t show.',
-  },
-  x86: {
-    kind: 'real',
-    L: 8, lineBytes: 64,
-    defaultN: 256, maxN: 512,
-    tiles: [8, 16, 32, 64, 128], defaultT: 32,
-    levels: [
-      { sets: 64, ways: 8 },               // 64 sets x 8 ways x 64 B = 32 KB
-      { sets: 1024, ways: 8 },             // 1024 sets x 8 ways x 64 B = 512 KB
-      { sets: 32768, ways: 16 },           // 32768 sets x 16 ways x 64 B = 32 MB
-    ],
-    cycles: [4, 14, 45, 250],
-    names: ['L1', 'L2', 'L3', 'DRAM'],
-    colors: ['--hit', '--l2', '--l3', '--miss'],
-    summary: 'L1 32 KB, L2 512 KB, L3 32 MB',
-    blurb: 'L1 + L2 + L3 like a typical x86 desktop. 64 B lines, set-associative, LRU.',
-    specs: [
-      ['Cache line', '64 B, so 8 doubles', tag('illustrative', 'typical')],
-      ['L1 data', '32 KB, 8-way', tag('illustrative', 'typical')],
-      ['L2', '512 KB, 8-way', tag('illustrative', 'typical')],
-      ['L3', '32 MB, 16-way', `${tag('illustrative', 'typical')} shared by all cores on a real chip`],
-      ['Replacement', 'LRU in every set', `${tag('assumed', 'assumed')} real chips approximate LRU`],
-      ['Cost per access', 'L1 ≈ 4, L2 ≈ 14, L3 ≈ 45, DRAM ≈ 250 cycles', tag('assumed', 'rough estimates')],
-    ],
-    note: 'These are illustrative round numbers, not one specific processor, and they were not measured on this machine. With a 512 KB L2, the three matrices stop fitting at moderate sizes, which is when the L3 starts to matter. The L3 is too big to draw, so it only shows up in the counters.',
   },
 };
 
+// weakest to strongest within each group: name, group, line size in bytes, cache levels (size, ways, how well known), memory name,
+// rough cycle cost per level and for memory, then a note shown under the spec table
+const HARDWARE = [
+  ['x86', 'x86 desktop (typical)', 'CPU', 64,
+    [['L1', 32 * KB, 8, 'typical'], ['L2', 512 * KB, 8, 'typical'], ['L3', 32 * MB, 16, 'typical']], 'DRAM', [4, 14, 45, 250],
+    'Round numbers typical of a desktop chip, not one specific processor. With a 512 KB L2, the three matrices stop fitting at moderate sizes, which is when the L3 starts to matter.'],
+  ['m5', 'Apple M5', 'CPU', 128,
+    [['L1', 128 * KB, 8, 'measured'], ['L2', 16 * MB, 8, 'measured']], 'DRAM', [4, 18, 350],
+    'Sizes come from <code>sysctl</code> on an M5 (performance-core values). macOS reports no L3; the system-level cache is not modeled. Because sets are picked by address, power-of-two row lengths like 512 make a column of B land in just a few sets, which causes conflict misses that the fully associative teaching cache can\'t show.'],
+  ['ryzen', 'AMD Ryzen 9 7950X', 'CPU', 64,
+    [['L1', 32 * KB, 8, 'typical'], ['L2', 1 * MB, 8, 'typical'], ['L3', 32 * MB, 16, 'typical']], 'DRAM', [4, 14, 47, 250],
+    'Zen 4 core. The L3 is one CCD\'s share; the other CCD\'s L3 is not reachable from this core.'],
+  ['i9', 'Intel Core i9-14900K', 'CPU', 64,
+    [['L1', 48 * KB, 12, 'typical'], ['L2', 2 * MB, 16, 'typical'], ['L3', 36 * MB, 12, 'typical']], 'DRAM', [5, 16, 80, 250],
+    'Raptor Lake performance core. The L3 is shared by all cores on the real chip.'],
+  ['rtx4090', 'NVIDIA RTX 4090', 'GPU', 128,
+    [['L1', 128 * KB, 8, 'typical'], ['L2', 72 * MB, 16, 'typical']], 'GDDR', [33, 250, 500],
+    'Ada Lovelace. The large L2 is what lets consumer GPUs get by with narrower GDDR memory.'],
+  ['rtx5090', 'NVIDIA RTX 5090', 'GPU', 128,
+    [['L1', 128 * KB, 8, 'typical'], ['L2', 96 * MB, 16, 'typical']], 'GDDR', [33, 250, 500],
+    'Blackwell consumer part. Numbers are the published totals; the L1 is per streaming multiprocessor.'],
+  ['a100', 'NVIDIA A100', 'GPU', 128,
+    [['L1', 192 * KB, 8, 'typical'], ['L2', 40 * MB, 16, 'typical']], 'HBM', [33, 200, 600],
+    'One streaming multiprocessor\'s view: its L1 (shared with shared memory) and the L2 shared by the whole GPU. A real kernel runs thousands of threads at once; this traces one thread\'s accesses in order.'],
+  ['h100', 'NVIDIA H100', 'GPU', 128,
+    [['L1', 256 * KB, 8, 'typical'], ['L2', 50 * MB, 16, 'typical']], 'HBM', [33, 260, 650],
+    'One streaming multiprocessor\'s view of a Hopper GPU. The L2 is shared by the whole chip. This traces one thread\'s accesses in order, not a parallel kernel.'],
+  ['h200', 'NVIDIA H200', 'GPU', 128,
+    [['L1', 256 * KB, 8, 'typical'], ['L2', 50 * MB, 16, 'typical']], 'HBM', [33, 260, 600],
+    'Same Hopper die as the H100 with faster, larger HBM3e. The caches are identical, so only the memory cost differs.'],
+  ['mi300x', 'AMD MI300X', 'GPU', 128,
+    [['L1', 32 * KB, 8, 'typical'], ['L2', 4 * MB, 16, 'typical'], ['L3', 256 * MB, 16, 'typical']], 'HBM', [50, 250, 450, 800],
+    'CDNA 3. The L2 is one XCD\'s share and the L3 is the 256 MB Infinity Cache shared by the whole package.'],
+  ['b200', 'NVIDIA B200', 'GPU', 128,
+    [['L1', 256 * KB, 8, 'typical'], ['L2', 126 * MB, 16, 'typical']], 'HBM', [33, 260, 550],
+    'Blackwell datacenter part, two dies on one package. The L2 figure is the reported total across both dies; HBM3E brings the memory cost down from Hopper. This traces one thread\'s accesses in order, not a parallel kernel.'],
+  ['mi350x', 'AMD MI350X', 'GPU', 128,
+    [['L1', 32 * KB, 8, 'typical'], ['L2', 4 * MB, 16, 'typical'], ['L3', 256 * MB, 16, 'typical']], 'HBM', [50, 250, 450, 750],
+    'CDNA 4. Same cache layout as the MI300X (4 MB L2 per XCD, 256 MB Infinity Cache) with faster HBM3E, so the memory cost is a little lower.'],
+  ['mi355x', 'AMD MI355X', 'GPU', 128,
+    [['L1', 32 * KB, 8, 'typical'], ['L2', 4 * MB, 16, 'typical'], ['L3', 256 * MB, 16, 'typical']], 'HBM', [50, 250, 450, 750],
+    'CDNA 4, the higher-clocked liquid-cooled version of the MI350X. The caches and memory are identical, so the trace matches the MI350X; the real difference is clock speed, which this model does not simulate.'],
+];
+
+for (const [id, name, group, lineBytes, levels, mem, cycles, note] of HARDWARE) {
+  const L = lineBytes / 8;
+  const gpu = group === 'GPU';
+  MODES[id] = {
+    kind: 'real', name, group, L, lineBytes,
+    defaultN: gpu ? 512 : 256, maxN: gpu ? 1024 : 512,
+    tiles: gpu ? [8, 16, 32, 64, 128, 256] : [8, 16, 32, 64, 128], defaultT: gpu ? 64 : 32,
+    levels: levels.map(([, size, ways]) => ({ sets: size / (lineBytes * ways), ways })),
+    cycles,
+    names: [...levels.map(l => l[0]), mem],
+    colors: [...LEVEL_COLORS.slice(0, levels.length), '--miss'],
+    summary: levels.map(([nm, size]) => `${nm} ${fmtBytes(size)}`).join(', '),
+    specs: [
+      ['Cache line', `${lineBytes} B, so ${L} doubles`, tag(levels[0][3], levels[0][3])],
+      ...levels.map(([nm, size, ways, how]) => [nm, `${fmtBytes(size)}, ${ways}-way`,
+        `${tag(how, how === 'measured' ? 'size measured' : 'size ' + how)} ${tag('assumed', 'ways assumed')}`]),
+      ['Replacement', 'LRU in every set', `${tag('assumed', 'assumed')} real chips approximate LRU`],
+      ['Cost per access', [...levels.map(l => l[0]), mem].map((nm, i) => `${nm} ≈ ${cycles[i]}`).join(', ') + ' cycles', tag('assumed', 'rough estimates')],
+    ],
+    note: note + ' Matrices are 8-byte doubles, stored row by row, each starting on a fresh line.',
+  };
+}
+
 const METHODS = [['Naive', 'ijk'], ['Reordered', 'ikj'], ['Tiled', 'tile']];
+const METHOD_DESC = {
+  ijk: 'The textbook triple loop. Each output walks down a column of B, so every step lands on a new cache line.',
+  ikj: 'Inner loops swapped. B and C are read along rows, so every line that gets loaded is fully used.',
+  tile: 'Works on small blocks at a time. The block in use stays in cache while it is reused.',
+};
 
 // Where each matrix sits in memory, counted in values. A is M×K, B is K×P and C is M×P, stored
 // row by row. Each starts on a fresh cache line, so a matrix's size is rounded up to a whole line.
@@ -218,14 +243,14 @@ class LRU {
 class SetAssoc {
   constructor(sets, ways) {
     this.ways = ways;
-    this.mask = sets - 1;
+    this.sets = sets;
     this.tags = new Int32Array(sets * ways).fill(-1);
   }
 
   // Returns true for a hit, false for a miss.
   access(line) {
     const { tags, ways } = this;
-    const base = (line & this.mask) * ways;
+    const base = (line % this.sets) * ways;
     let i = 0;
     while (i < ways && tags[base + i] !== line) i++;
     const hit = i < ways;
@@ -376,7 +401,7 @@ function cardsFor(m) {
   ];
   return [
     ...names.slice(0, mem).map((nm, i) => [`${nm} hits`, () => counts[i].toLocaleString()]),
-    ['DRAM', () => counts[mem].toLocaleString()],
+    [names[mem], () => counts[mem].toLocaleString()],
     ['L1 hit rate', hitRate],
     ['Cycles / access', () => (pos ? (cyclesOf(counts) / pos).toFixed(1) : '–')],
   ];
@@ -544,6 +569,12 @@ function setMethod(m, andReset = true) {
   for (const k of ['ijk', 'ikj', 'tile'])
     document.getElementById('m' + k).setAttribute('aria-pressed', String(k === m));
   document.querySelector('.tilefield').hidden = m !== 'tile';
+  const desc = document.getElementById('methodDesc');
+  document.getElementById('m' + m).insertAdjacentElement('afterend', desc);   // sits right under the chosen button
+  desc.textContent = METHOD_DESC[m];
+  desc.classList.remove('show');
+  void desc.offsetWidth;            // restart the fade so the card pops on every change
+  desc.classList.add('show');
   if (andReset) { reset(); renderComparison(); }
 }
 document.getElementById('mijk').addEventListener('click', () => setMethod('ijk'));
@@ -653,14 +684,30 @@ document.getElementById('cap').addEventListener('input', e => {
 });
 
 // Switching modes swaps the cache model, the line size and sensible defaults for the matrix sizes and the tile size
-const MODE_BUTTONS = { teaching: 'modeTeaching', m5: 'modeM5', x86: 'modeX86' };
+const hwSel = document.getElementById('hw');
+const groups = [...new Set(HARDWARE.map(h => h[2]))];
+hwSel.innerHTML = groups.map(g => `<optgroup label="${g}">${HARDWARE.filter(h => h[2] === g)
+  .map(([id, name]) => `<option value="${id}">${name}</option>`).join('')}</optgroup>`).join('');
+
+function buildLegend(m) {
+  const item = (style, text) => `<span><span class="sw" style="${style}"></span>${text}</span>`;
+  document.getElementById('legend').innerHTML = m.kind === 'teaching'
+    ? item('background:var(--hit)', 'Hit') + item('background:var(--miss)', 'Miss') + item('background:var(--cached)', 'Cached')
+    : m.names.map((nm, i) => item(`background:var(${m.colors[i]})`, nm)).join('')
+      + item('background:var(--cached1)', 'In L1')
+      + `<span><span class="sw cached2"></span>In L2</span>`;
+}
+
 function setMode(next) {
   mode = next;
   const m = MODES[mode];
+  const real = m.kind === 'real';
   document.body.dataset.mode = m.kind;
-  document.body.dataset.hier = m.levels ? m.levels.length : 1;
-  for (const [k, id] of Object.entries(MODE_BUTTONS))
-    document.getElementById(id).setAttribute('aria-pressed', String(k === mode));
+  document.getElementById('modeTeaching').setAttribute('aria-pressed', String(!real));
+  document.getElementById('modeHardware').setAttribute('aria-pressed', String(real));
+  document.querySelector('.hwfield').hidden = !real;
+  if (real) hwSel.value = mode;
+  buildLegend(m);
   document.getElementById('specsBody').innerHTML = (m.specs || [])
     .map(([label, value, source]) => `<tr><th>${label}</th><td>${value}</td><td>${source}</td></tr>`).join('');
   document.getElementById('specsNote').innerHTML = m.note || '';
@@ -672,8 +719,9 @@ function setMode(next) {
   setMethod(method, false);
   setSize();
 }
-for (const [k, id] of Object.entries(MODE_BUTTONS))
-  document.getElementById(id).addEventListener('click', () => mode !== k && setMode(k));
+document.getElementById('modeTeaching').addEventListener('click', () => mode !== 'teaching' && setMode('teaching'));
+document.getElementById('modeHardware').addEventListener('click', () => isReal() || setMode(hwSel.value));
+hwSel.addEventListener('change', () => setMode(hwSel.value));
 
 window.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest('input, select, textarea, button, summary')) return;

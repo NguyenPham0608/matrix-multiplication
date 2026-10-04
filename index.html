@@ -7,33 +7,30 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body data-mode="teaching">
-  <header class="topbar">
-    <div class="topbar-inner">
-      <h1>Matrix multiply <span>cache simulator</span></h1>
-    </div>
-  </header>
-
   <main class="layout">
     <aside class="side panel">
       <section class="group">
         <h2>Model</h2>
         <div class="seg" role="group" aria-label="Cache model">
           <button id="modeTeaching" aria-pressed="true">Teaching</button>
-          <button id="modeM5" aria-pressed="false">M5</button>
-          <button id="modeX86" aria-pressed="false">x86</button>
+          <button id="modeHardware" aria-pressed="false">Hardware</button>
+        </div>
+        <div class="field hwfield" hidden>
+          <select id="hw" aria-label="Hardware"></select>
         </div>
       </section>
 
       <section class="group">
         <h2>Method</h2>
         <div class="methods" role="group" aria-label="Multiplication method">
-          <button id="mijk" class="method" aria-pressed="true" title="Each output walks down a column of B, so every step hits a new cache line.">
-            Naive <span class="chip">i-j-k</span>
+          <button id="mijk" class="method" aria-pressed="true">
+            Naive
           </button>
-          <button id="mikj" class="method" aria-pressed="false" title="Inner loops swapped so B and C are read along rows and every loaded line is fully used.">
-            Reordered <span class="chip">i-k-j</span>
+          <p class="desc" id="methodDesc"></p>
+          <button id="mikj" class="method" aria-pressed="false">
+            Reordered
           </button>
-          <button id="mtile" class="method" aria-pressed="false" title="Works on small blocks so the block in use stays in cache while it is reused.">
+          <button id="mtile" class="method" aria-pressed="false">
             Tiled
           </button>
         </div>
@@ -88,17 +85,7 @@
     <section class="panel content">
       <div class="group">
         <div class="stage-head">
-          <div class="legend">
-            <span class="teach-only"><span class="sw hit"></span>Hit</span>
-            <span class="teach-only"><span class="sw miss"></span>Miss</span>
-            <span class="teach-only"><span class="sw cached"></span>Cached</span>
-            <span class="real-only"><span class="sw hit"></span>L1</span>
-            <span class="real-only"><span class="sw l2"></span>L2</span>
-            <span class="real-only l3-only"><span class="sw l3"></span>L3</span>
-            <span class="real-only"><span class="sw miss"></span>DRAM</span>
-            <span class="real-only"><span class="sw cached1"></span>In L1</span>
-            <span class="real-only"><span class="sw cached2"></span>In L2</span>
-          </div>
+          <div class="legend" id="legend"></div>
           <p id="dims" class="muted"></p>
         </div>
 
