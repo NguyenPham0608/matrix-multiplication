@@ -9,21 +9,22 @@
 <body data-mode="teaching">
   <header class="topbar">
     <div class="topbar-inner">
-      <div class="brand">
-        <h1>Matrix multiply <span>cache simulator</span></h1>
-        <p class="sub" id="modeBlurb"></p>
-      </div>
-      <div class="seg" role="group" aria-label="Cache model">
-        <button id="modeTeaching" aria-pressed="true">Teaching</button>
-        <button id="modeM5" aria-pressed="false">M5</button>
-        <button id="modeX86" aria-pressed="false">x86</button>
-      </div>
+      <h1>Matrix multiply <span>cache simulator</span></h1>
     </div>
   </header>
 
   <main class="layout">
-    <aside class="side">
-      <section class="panel">
+    <aside class="side panel">
+      <section class="group">
+        <h2>Model</h2>
+        <div class="seg" role="group" aria-label="Cache model">
+          <button id="modeTeaching" aria-pressed="true">Teaching</button>
+          <button id="modeM5" aria-pressed="false">M5</button>
+          <button id="modeX86" aria-pressed="false">x86</button>
+        </div>
+      </section>
+
+      <section class="group">
         <h2>Method</h2>
         <div class="methods" role="group" aria-label="Multiplication method">
           <button id="mijk" class="method" aria-pressed="true" title="Each output walks down a column of B, so every step hits a new cache line.">
@@ -42,7 +43,7 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section class="group">
         <h2>Matrices</h2>
         <div class="dimgrid">
           <span class="matlabel">A</span>
@@ -66,7 +67,7 @@
         <p id="dimStatus" class="status" role="status"></p>
       </section>
 
-      <section class="panel teach-only">
+      <section class="group teach-only">
         <h2>Cache</h2>
         <div class="field">
           <label for="cap">Size</label>
@@ -74,57 +75,60 @@
           <span id="capOut" class="out">16 lines</span>
         </div>
       </section>
+
+      <section class="group">
+        <h2>Speed</h2>
+        <div class="field">
+          <input type="range" id="speed" min="0" max="1000" step="1" value="391" aria-label="Speed">
+          <span id="speedOut" class="out">12 / frame</span>
+        </div>
+      </section>
     </aside>
 
-    <div class="content">
-      <section class="panel stage">
-        <div class="legend">
-          <span class="teach-only"><span class="sw hit"></span>Hit</span>
-          <span class="teach-only"><span class="sw miss"></span>Miss</span>
-          <span class="teach-only"><span class="sw cached"></span>Cached</span>
-          <span class="real-only"><span class="sw hit"></span>L1</span>
-          <span class="real-only"><span class="sw l2"></span>L2</span>
-          <span class="real-only l3-only"><span class="sw l3"></span>L3</span>
-          <span class="real-only"><span class="sw miss"></span>DRAM</span>
-          <span class="real-only"><span class="sw cached1"></span>In L1</span>
-          <span class="real-only"><span class="sw cached2"></span>In L2</span>
+    <section class="panel content">
+      <div class="group">
+        <div class="stage-head">
+          <div class="legend">
+            <span class="teach-only"><span class="sw hit"></span>Hit</span>
+            <span class="teach-only"><span class="sw miss"></span>Miss</span>
+            <span class="teach-only"><span class="sw cached"></span>Cached</span>
+            <span class="real-only"><span class="sw hit"></span>L1</span>
+            <span class="real-only"><span class="sw l2"></span>L2</span>
+            <span class="real-only l3-only"><span class="sw l3"></span>L3</span>
+            <span class="real-only"><span class="sw miss"></span>DRAM</span>
+            <span class="real-only"><span class="sw cached1"></span>In L1</span>
+            <span class="real-only"><span class="sw cached2"></span>In L2</span>
+          </div>
+          <p id="dims" class="muted"></p>
         </div>
 
         <canvas id="cv" aria-label="Grids for matrices A, B and C showing cache hits and misses"></canvas>
-        <p id="dims" class="muted"></p>
 
-        <div class="progress" aria-hidden="true"><div id="progFill"></div></div>
+        <div class="progressrow">
+          <div class="progress" aria-hidden="true"><div id="progFill"></div></div>
+          <span id="progOut" class="out">0%</span>
+        </div>
 
         <div class="transport">
           <button id="play" class="primary" title="Space">Play</button>
           <button id="step" title="Step (→)">Step</button>
           <button id="reset" title="Reset (R)">Reset</button>
-          <div class="speed">
-            <label for="speed">Speed</label>
-            <input type="range" id="speed" min="0" max="1000" step="1" value="391">
-            <span id="speedOut" class="out">12 / frame</span>
-          </div>
+          <div class="cards" id="cards"></div>
         </div>
-      </section>
-
-      <section class="panel">
-        <h2>Counters</h2>
-        <div class="cards" id="cards"></div>
-        <div class="sharebar" id="share" aria-hidden="true"></div>
         <p id="per" class="muted"></p>
-      </section>
+      </div>
 
-      <section class="panel">
-        <h2 id="cmpTitle">Full run</h2>
+      <div class="group">
+        <h2>Full run</h2>
         <div class="cmp" id="cmp"></div>
-      </section>
+      </div>
 
-      <details class="panel real-only" id="specs">
+      <details class="group real-only" id="specs">
         <summary>Model details</summary>
         <table class="specs"><tbody id="specsBody"></tbody></table>
         <p class="muted" id="specsNote"></p>
       </details>
-    </div>
+    </section>
   </main>
 
   <script src="script.js"></script>

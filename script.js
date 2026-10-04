@@ -306,25 +306,19 @@ const cyclesOf = c => c.reduce((sum, n, i) => sum + n * MODES[mode].cycles[i], 0
 
 function renderComparison() {
   const real = isReal(), def = MODES[mode];
-  const done = runs.filter(r => r.counts);
-  const score = r => (real ? cyclesOf(r.counts) : r.counts[1]);
-  const max = Math.max(1, ...done.map(score));
   const pct = (a, b) => (a / b * 100).toFixed(1) + '%';
 
-  document.getElementById('cmpTitle').textContent = real ? 'Full run · memory time' : 'Full run · misses';
-
+  // every bar spans the full width, split by who served each access
   document.getElementById('cmp').innerHTML = runs.map(r => {
     const name = `<span class="name${r.m === method ? ' current' : ''}">${r.name}</span>`;
     if (!r.counts) return `${name}<div class="track"></div><span class="num">${percent(r.done / r.total)}</span>`;
     const c = r.counts;
-    if (!real) return `${name}
-      <div class="track"><div class="fill" style="width:${Math.max(0.5, c[1] / max * 100).toFixed(1)}%"></div></div>
-      <span class="num">${c[1].toLocaleString()} misses · ${pct(c[0], r.total)} hit</span>`;
     const segments = c.map((n, i) =>
-      `<div class="fill" style="width:${(n * def.cycles[i] / max * 100).toFixed(2)}%;background:var(${def.colors[i]})"></div>`).join('');
-    return `${name}
-      <div class="track">${segments}</div>
-      <span class="num">${def.names.map((nm, i) => `${nm} ${pct(c[i], r.total)}`).join(' · ')}<br>${(cyclesOf(c) / r.total).toFixed(1)} cycles / access</span>`;
+      `<div class="fill" style="width:${(n / r.total * 100).toFixed(2)}%;background:var(${def.colors[i]})"></div>`).join('');
+    const num = real
+      ? `${def.names.map((nm, i) => `${nm} ${pct(c[i], r.total)}`).join(' · ')}<br>${(cyclesOf(c) / r.total).toFixed(1)} cycles / access`
+      : `${pct(c[0], r.total)} hit · ${c[1].toLocaleString()} misses`;
+    return `${name}<div class="track">${segments}</div><span class="num">${num}</span>`;
   }).join('');
 }
 
@@ -379,14 +373,12 @@ function cardsFor(m) {
     ['Hits', () => counts[0].toLocaleString()],
     ['Misses', () => counts[1].toLocaleString()],
     ['Hit rate', hitRate],
-    ['Progress', () => percent(pos / total)],
   ];
   return [
     ...names.slice(0, mem).map((nm, i) => [`${nm} hits`, () => counts[i].toLocaleString()]),
     ['DRAM', () => counts[mem].toLocaleString()],
     ['L1 hit rate', hitRate],
     ['Cycles / access', () => (pos ? (cyclesOf(counts) / pos).toFixed(1) : '–')],
-    ['Progress', () => percent(pos / total)],
   ];
 }
 let cards = [];
@@ -399,12 +391,14 @@ function buildCards() {
 }
 
 function updateStats() {
-  document.getElementById('progFill').style.width = (total ? pos / total * 100 : 0) + '%';
-  // share of accesses served by each level, in the same colors as the grids
-  const colors = MODES[mode].colors.map(c => `var(${c})`);
-  document.getElementById('share').innerHTML = pos
-    ? counts.map((c, i) => `<span style="width:${c / pos * 100}%;background:${colors[i]}"></span>`).join('')
+  // the progress bar fills with the run, split by who served each access, in the grid colors
+  const done = total ? pos / total : 0;
+  const fill = document.getElementById('progFill');
+  fill.style.width = done * 100 + '%';
+  fill.innerHTML = pos
+    ? counts.map((c, i) => `<span style="width:${c / pos * 100}%;background:var(${MODES[mode].colors[i]})"></span>`).join('')
     : '';
+  document.getElementById('progOut').textContent = percent(done);
   cards.forEach(([, get], i) => { document.getElementById('card' + i).textContent = get(); });
   document.getElementById('per').textContent =
     `${isReal() ? 'L1 misses' : 'Misses'} · A ${perMatrix[0].toLocaleString()} · B ${perMatrix[1].toLocaleString()} · C ${perMatrix[2].toLocaleString()}`;
@@ -549,8 +543,7 @@ function setMethod(m, andReset = true) {
   method = m;
   for (const k of ['ijk', 'ikj', 'tile'])
     document.getElementById('m' + k).setAttribute('aria-pressed', String(k === m));
-  document.querySelector('.tilefield').classList.toggle('off', m !== 'tile');
-  document.getElementById('tile').disabled = m !== 'tile';
+  document.querySelector('.tilefield').hidden = m !== 'tile';
   if (andReset) { reset(); renderComparison(); }
 }
 document.getElementById('mijk').addEventListener('click', () => setMethod('ijk'));
@@ -668,7 +661,6 @@ function setMode(next) {
   document.body.dataset.hier = m.levels ? m.levels.length : 1;
   for (const [k, id] of Object.entries(MODE_BUTTONS))
     document.getElementById(id).setAttribute('aria-pressed', String(k === mode));
-  document.getElementById('modeBlurb').textContent = m.blurb;
   document.getElementById('specsBody').innerHTML = (m.specs || [])
     .map(([label, value, source]) => `<tr><th>${label}</th><td>${value}</td><td>${source}</td></tr>`).join('');
   document.getElementById('specsNote').innerHTML = m.note || '';
