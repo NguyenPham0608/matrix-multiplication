@@ -5,8 +5,8 @@
 // number of ways and the cycle costs are assumptions.
 const MODES = {
   teaching: {
-    L: 4,                                  // values per cache line
-    defaultN: 16, maxN: 1024,
+    L: 4,
+    defaultN: 16, maxN: 1024,             // starting size of every dimension, largest allowed
     tiles: [2, 4, 8], defaultT: 4,
     blurb: 'A tiny fully associative LRU cache, 4 values per line, so every hit and miss is easy to see.',
   },
@@ -22,94 +22,95 @@ const MODES = {
 };
 
 const METHODS = [['Basic', 'ijk'], ['Reordering', 'ikj'], ['Tiled', 'tile']];
-const METHOD_DESC = {
-  ijk: 'Textbook triple loop. For every C[i][j] it walks down a column of B, so each step lands on a different cache line.',
-  ikj: 'Swaps the two inner loops. Now B and C are both walked along rows, so every line that gets loaded is fully used.',
-  tile: 'Works on small T×T blocks of each matrix at a time, so the block being used stays in the cache while it is reused.',
-};
 
-// Values from the start of one matrix to the next: N * N rounded up to a whole cache line,
-// so every matrix starts on a fresh line.
-const strideFor = (N, L) => Math.ceil(N * N / L) * L;
+// Where each matrix sits in memory, counted in values. A is M×K, B is K×P and C is M×P, stored
+// row by row. Each starts on a fresh cache line, so a matrix's size is rounded up to a whole line.
+function layoutFor(M, K, P, L) {
+  const rows = [M, K, M], cols = [K, P, P];
+  const base = [0, 0, 0];
+  for (let m = 1; m < 3; m++) base[m] = base[m - 1] + Math.ceil(rows[m - 1] * cols[m - 1] / L) * L;
+  return { rows, cols, base, end: base[2] + Math.ceil(M * P / L) * L };
+}
 
 // ---------- State ----------
 let mode = 'teaching';
-let L = MODES.teaching.L;  // values per cache line
-let T = MODES.teaching.defaultT; // tile size for the tiled method
-let N = 16;                // matrices are N × N, set from the page
-let STRIDE = strideFor(N, L);
-let method = 'ijk';        // 'ijk' | 'ikj' | 'tile'
-let CAP = 16;              // teaching cache capacity in lines
+let L = MODES.teaching.L;
+let T = MODES.teaching.defaultT;
+let M = 16, K = 16, P = 16; // A is M×K, B is K×P, C is M×P, set from the page
+let lay = layoutFor(M, K, P, L);
+let method = 'ijk';
+let CAP = 16;
 let gen = null;            // hands out the current run's accesses, a chunk at a time
-let chunk = null;          // the chunk gen last filled
+let chunk = null;
 let chunkLen = 0, chunkPos = 0;
-let total = 0;             // how many accesses the whole run makes
-let pos = 0;               // how many accesses we have simulated so far
+let total = 0;
+let pos = 0;
 let sim = null;            // the simulated cache: { touch(line) -> level, l1, l2 }
 let counts = [0, 0, 0];    // accesses served by L1, L2, DRAM (teaching: hit, unused, miss)
-let perMatrix = [0, 0, 0]; // misses for A, B, C
+let perMatrix = [0, 0, 0];
 let playing = false;
 let speed = 12;            // accesses per animation frame; below 1 means one access every 1/speed frames
-let idle = 0;              // frames since the last access, used when slower than 1 per frame
-let dirty = true;          // the canvas needs redrawing
+let idle = 0;
+let dirty = true;
 
 // For drawing: when each address was last touched, plus a ring of the most recent accesses
 let lastTime = null;
-const RECENT = 4096;                       // the most accesses a fade can span
-const recentAddr = new Int32Array(RECENT); // access number t is stored at t % RECENT
+const RECENT = 4096;
+const recentAddr = new Int32Array(RECENT);
 const recentHit = new Uint8Array(RECENT);  // which level served access t: 0 = L1, 1 = L2, 2 = DRAM
 
 // Everything the simulation needs, in a form that can be posted to a worker
 function config() {
   const m = MODES[mode];
   return {
-    mode, L, T, cap: CAP,
+    mode, L, T, M, K, P, cap: CAP,
     l1Sets: m.l1?.sets, l1Ways: m.l1?.ways, l2Sets: m.l2?.sets, l2Ways: m.l2?.ways,
   };
 }
 
 // ---------- 1. Build the access sequence ----------
-// Each access is a memory address, counted in values. Matrix M (0 = A, 1 = B, 2 = C) starts at
-// M * stride, and its element [r][c] is r * N + c after that. Address / L is the cache line.
+// Each access is a memory address, counted in values. Matrix X (0 = A, 1 = B, 2 = C) starts at
+// lay.base[X], and its element [r][c] is r * cols + c after that. Address / L is the cache line.
 //
-// A run makes about 2N³ accesses, billions at N = 1024, too many to store. So this generator
-// fills buf with the accesses of one inner loop at a time and yields how many it wrote.
-function* accessChunks(m, N, buf, L, T) {
-  const stride = Math.ceil(N * N / L) * L;
+// A run makes about 2·M·K·P accesses, billions for 1024-sized matrices, too many to store. So
+// this generator fills buf with the accesses of one inner loop at a time and yields how many
+// it wrote.
+function* accessChunks(m, lay, buf, L, T) {
+  const M = lay.rows[0], K = lay.rows[1], P = lay.cols[1];
+  const [bA, bB, bC] = lay.base;
   let n = 0;
-  const add = (M, r, c) => { buf[n++] = M * stride + r * N + c; };
 
   if (m === 'ijk') {
-    for (let i = 0; i < N; i++)
-      for (let j = 0; j < N; j++) {
-        for (let k = 0; k < N; k++) {
-          add(0, i, k);          // A[i][k]
-          add(1, k, j);          // B[k][j]
+    for (let i = 0; i < M; i++)
+      for (let j = 0; j < P; j++) {
+        for (let k = 0; k < K; k++) {
+          buf[n++] = bA + i * K + k;
+          buf[n++] = bB + k * P + j;
         }
-        add(2, i, j);            // C[i][j] written once, it was in a register
+        buf[n++] = bC + i * P + j;     // C[i][j] written once, it was in a register
         yield n; n = 0;
       }
   } else if (m === 'ikj') {
-    for (let i = 0; i < N; i++)
-      for (let k = 0; k < N; k++) {
-        add(0, i, k);            // A[i][k] loaded once into a register
-        for (let j = 0; j < N; j++) {
-          add(1, k, j);          // B[k][j]
-          add(2, i, j);          // C[i][j] read + write (same line, counted once)
+    for (let i = 0; i < M; i++)
+      for (let k = 0; k < K; k++) {
+        buf[n++] = bA + i * K + k;     // A[i][k] loaded once into a register
+        for (let j = 0; j < P; j++) {
+          buf[n++] = bB + k * P + j;
+          buf[n++] = bC + i * P + j;   // C[i][j] read + write (same line, counted once)
         }
         yield n; n = 0;
       }
   } else {
-    // Math.min cuts the last tile short when N isn't a multiple of T
-    for (let ii = 0; ii < N; ii += T)
-      for (let kk = 0; kk < N; kk += T)
-        for (let jj = 0; jj < N; jj += T)
-          for (let i = ii; i < Math.min(ii + T, N); i++)
-            for (let k = kk; k < Math.min(kk + T, N); k++) {
-              add(0, i, k);
-              for (let j = jj; j < Math.min(jj + T, N); j++) {
-                add(1, k, j);
-                add(2, i, j);
+    // Math.min cuts the last tile short when a dimension isn't a multiple of T
+    for (let ii = 0; ii < M; ii += T)
+      for (let kk = 0; kk < K; kk += T)
+        for (let jj = 0; jj < P; jj += T)
+          for (let i = ii; i < Math.min(ii + T, M); i++)
+            for (let k = kk; k < Math.min(kk + T, K); k++) {
+              buf[n++] = bA + i * K + k;
+              for (let j = jj; j < Math.min(jj + T, P); j++) {
+                buf[n++] = bB + k * P + j;
+                buf[n++] = bC + i * P + j;
               }
               yield n; n = 0;
             }
@@ -118,15 +119,15 @@ function* accessChunks(m, N, buf, L, T) {
 
 // How many accesses a run makes: 2 per multiply-add, plus one per inner loop
 // (C for i, j, k; A for the others). The tiled method runs its inner loop once per j-tile.
-function totalAccesses(m, N, T) {
-  const innerLoops = m === 'tile' ? N * N * Math.ceil(N / T) : N * N;
-  return 2 * N ** 3 + innerLoops;
+function totalAccesses(m, M, K, P, T) {
+  const innerLoops = m === 'ijk' ? M * P : m === 'ikj' ? M * K : M * K * Math.ceil(P / T);
+  return 2 * M * K * P + innerLoops;
 }
 
 // ---------- 2. The caches ----------
 // Fully associative with LRU eviction, kept as a doubly linked list of lines, most recent first.
 // The links live in typed arrays indexed by line number, so each access is a few array writes,
-// fast enough for the billions of accesses in a full run at N = 1024.
+// fast enough for the billions of accesses in a full run of 1024-sized matrices.
 class LRU {
   constructor(lines, cap) {
     this.cap = cap;
@@ -144,12 +145,12 @@ class LRU {
     const { prev, next, cached, head } = this;
     const hit = cached[line] === 1;
     if (hit) {
-      next[prev[line]] = next[line];      // unlink, to move it to the front below
+      next[prev[line]] = next[line];
       prev[next[line]] = prev[line];
     } else {
-      cached[line] = 1;                   // miss: load the line
+      cached[line] = 1;
       if (this.size === this.cap) {
-        const old = prev[head];           // evict least recently used, at the back
+        const old = prev[head];
         cached[old] = 0;
         next[prev[old]] = head;
         prev[head] = prev[old];
@@ -157,7 +158,7 @@ class LRU {
         this.size++;
       }
     }
-    next[line] = next[head];              // insert at the front
+    next[line] = next[head];
     prev[line] = head;
     prev[next[head]] = line;
     next[head] = line;
@@ -174,7 +175,7 @@ class LRU {
 class SetAssoc {
   constructor(sets, ways) {
     this.ways = ways;
-    this.mask = sets - 1;                 // sets is a power of two
+    this.mask = sets - 1;
     this.tags = new Int32Array(sets * ways).fill(-1);
   }
 
@@ -187,7 +188,7 @@ class SetAssoc {
     const hit = i < ways;
     if (!hit) i = ways - 1;               // miss: the least recently used tag, at the back, is dropped
     for (; i > 0; i--) tags[base + i] = tags[base + i - 1];
-    tags[base] = line;                    // either way, this line is now the most recent
+    tags[base] = line;
     return hit;
   }
 
@@ -210,13 +211,14 @@ function makeSim(cfg, nLines) {
   return { l1, l2, touch: line => (l1.access(line) ? 0 : l2.access(line) ? 1 : 2) };
 }
 
-function fullRun(m, N, cfg) {
+function fullRun(m, cfg) {
   const L = cfg.L;
-  const touch = makeSim(cfg, 3 * strideFor(N, L) / L).touch;
-  const buf = new Int32Array(2 * N + 1);
+  const lay = layoutFor(cfg.M, cfg.K, cfg.P, L);
+  const touch = makeSim(cfg, lay.end / L).touch;
+  const buf = new Int32Array(2 * Math.max(cfg.K, cfg.P) + 1);
   const counts = [0, 0, 0];
   let done = 0, nextReport = 0;
-  for (const n of accessChunks(m, N, buf, L, cfg.T)) {
+  for (const n of accessChunks(m, lay, buf, L, cfg.T)) {
     for (let q = 0; q < n; q++) counts[touch(Math.floor(buf[q] / L))]++;
     done += n;
     if (done >= nextReport) { postMessage({ done }); nextReport += 1 << 24; }
@@ -225,7 +227,7 @@ function fullRun(m, N, cfg) {
 }
 
 const workerURL = URL.createObjectURL(new Blob([`
-  ${strideFor}
+  ${layoutFor}
   ${accessChunks}
   ${LRU}
   ${SetAssoc}
@@ -241,7 +243,7 @@ let runs = [];
 function startComparison() {
   workers.forEach(w => w.terminate());
   const cfg = config();
-  runs = METHODS.map(([name, m]) => ({ name, total: totalAccesses(m, N, T), done: 0, counts: null }));
+  runs = METHODS.map(([name, m]) => ({ name, m, total: totalAccesses(m, M, K, P, T), done: 0, counts: null }));
   workers = METHODS.map(([, m], i) => {
     const w = new Worker(workerURL);
     w.onmessage = e => {
@@ -249,19 +251,18 @@ function startComparison() {
       if (runs[i].counts) w.terminate();
       renderComparison();
     };
-    w.postMessage([m, N, cfg]);
+    w.postMessage([m, cfg]);
     return w;
   });
   renderComparison();
 }
 
-// Estimated memory time of a run in cycles (real mode only)
 const cyclesOf = c => c[0] * MODES.real.cycles[0] + c[1] * MODES.real.cycles[1] + c[2] * MODES.real.cycles[2];
 
 function renderComparison() {
   const real = mode === 'real';
   const done = runs.filter(r => r.counts);
-  const score = r => (real ? cyclesOf(r.counts) : r.counts[2]);   // what the bars compare
+  const score = r => (real ? cyclesOf(r.counts) : r.counts[2]);
   const max = Math.max(1, ...done.map(score));
   const pct = (a, b) => (a / b * 100).toFixed(1) + '%';
 
@@ -271,17 +272,17 @@ function renderComparison() {
 
   document.getElementById('cmp').innerHTML = runs.map(r => {
     if (!r.counts) return `
-      <span>${r.name}</span>
+      <span class="name${r.m === method ? ' current' : ''}">${r.name}</span>
       <div class="track"></div>
       <span class="num">running, ${percent(r.done / r.total)}</span>`;
     const c = r.counts;
     if (!real) return `
-      <span>${r.name}</span>
+      <span class="name${r.m === method ? ' current' : ''}">${r.name}</span>
       <div class="track"><div class="fill" style="width:${Math.max(0.5, c[2] / max * 100).toFixed(1)}%"></div></div>
       <span class="num">${c[2].toLocaleString()} misses, ${pct(c[0], r.total)} hits</span>`;
     const part = (n, i) => `${(n * MODES.real.cycles[i] / max * 100).toFixed(2)}%`;
     return `
-      <span>${r.name}</span>
+      <span class="name${r.m === method ? ' current' : ''}">${r.name}</span>
       <div class="track">
         <div class="fill" style="width:${part(c[0], 0)};background:var(--hit)"></div>
         <div class="fill" style="width:${part(c[1], 1)};background:var(--l2)"></div>
@@ -296,18 +297,21 @@ function percent(f) {
 }
 
 function fmtBytes(b) {
+  if (b < 1024) return b + ' B';
   return b >= 1 << 20 ? +(b / (1 << 20)).toFixed(1) + ' MB' : +(b / 1024).toFixed(1) + ' KB';
 }
+
+const matOf = x => (x < lay.base[1] ? 0 : x < lay.base[2] ? 1 : 2);
 
 // ---------- 4. Stepping the simulation ----------
 function reset() {
   playing = false;
   updatePlayButton();
-  gen = accessChunks(method, N, chunk, L, T);
+  gen = accessChunks(method, lay, chunk, L, T);
   chunkLen = chunkPos = 0;
-  total = totalAccesses(method, N, T);
+  total = totalAccesses(method, M, K, P, T);
   pos = 0;
-  sim = makeSim(config(), 3 * STRIDE / L);
+  sim = makeSim(config(), lay.end / L);
   counts = [0, 0, 0]; perMatrix = [0, 0, 0];
   lastTime.fill(-1);
   updateStats();
@@ -321,7 +325,7 @@ function advance(n) {
     const x = chunk[chunkPos++];
     const level = touch(Math.floor(x / L));
     counts[level]++;
-    if (level) perMatrix[Math.floor(x / STRIDE)]++;
+    if (level) perMatrix[matOf(x)]++;
     lastTime[x] = pos;
     recentAddr[pos % RECENT] = x;
     recentHit[pos % RECENT] = level;
@@ -331,7 +335,6 @@ function advance(n) {
   dirty = true;
 }
 
-// Counter cards for each mode: a label, and a function giving the text to show
 const CARDS = {
   teaching: [
     ['Hits', () => counts[0].toLocaleString()],
@@ -356,6 +359,12 @@ function buildCards() {
 }
 
 function updateStats() {
+  document.getElementById('progFill').style.width = (total ? pos / total * 100 : 0) + '%';
+  // share of accesses served by each level, in the same colors as the grids
+  const colors = ['var(--hit)', 'var(--l2)', 'var(--miss)'];
+  document.getElementById('share').innerHTML = pos
+    ? counts.map((c, i) => `<span style="width:${c / pos * 100}%;background:${colors[i]}"></span>`).join('')
+    : '';
   CARDS[mode].forEach(([, get], i) => { document.getElementById('card' + i).textContent = get(); });
   document.getElementById('per').textContent =
     `${mode === 'real' ? 'L1 misses' : 'Misses'} by matrix: A ${perMatrix[0].toLocaleString()}, B ${perMatrix[1].toLocaleString()}, C ${perMatrix[2].toLocaleString()}`;
@@ -364,17 +373,21 @@ function updateStats() {
 // ---------- 5. Drawing ----------
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
-const GAP = 24;       // space between the three grids
+const GAP = 24;
+const MAX_H = 520;    // tallest the grids may get, so tall matrices still fit on screen
 const L2_DRAW_MAX = 24000; // above this many matrix lines, the L2 layer is too slow to draw
-let W = 0, cs = 10;   // canvas CSS width, cell size in px
+let W = 0, cs = 10;
+let ox = [0, 0, 0];
 
 function resize() {
   const dpr = window.devicePixelRatio || 1;
   W = cv.clientWidth;
-  const fit = (W - 2 * GAP) / (3 * N);
-  cs = fit >= 2 ? Math.floor(fit) : fit;   // whole pixels keep small grids crisp; big N needs cells under 1 px
-  const h = Math.ceil(cs * N) + 22;
-  cv.width = W * dpr;            // real pixels, so it's sharp on retina
+  const tallest = Math.max(M, K);
+  const fit = Math.min((W - 2 * GAP) / (K + 2 * P), MAX_H / tallest);
+  cs = fit >= 2 ? Math.floor(fit) : fit;   // whole pixels keep small grids crisp; big matrices need cells under 1 px
+  ox = [0, K * cs + GAP, (K + P) * cs + 2 * GAP];
+  const h = Math.ceil(cs * tallest) + 22;
+  cv.width = W * dpr;
   cv.height = h * dpr;
   cv.style.height = h + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -385,55 +398,52 @@ function draw() {
   const css = getComputedStyle(document.documentElement);
   const color = name => css.getPropertyValue(name).trim();
   const muted = color('--muted'), border = color('--border-strong');
-  const hitColors = [color('--hit'), color('--l2'), color('--miss')];   // by level that served the access
+  const hitColors = [color('--hit'), color('--l2'), color('--miss')];
   const real = mode === 'real';
+  const { rows, cols, base } = lay;
 
   ctx.clearRect(0, 0, W, cv.height);
-  const gw = cs * N, oy = 20;
-  const gap = cs >= 4 ? 1 : 0;           // space between cells, once they're big enough to show it
-  const dot = Math.max(cs - gap, 1);     // drawn size of a cell, at least 1 px so accesses show at big N
-  const fadeWindow = Math.min(RECENT, Math.max(24, speed * 10)); // how long a highlight lingers
+  const oy = 20;
+  const gap = cs >= 4 ? 1 : 0;
+  const dot = Math.max(cs - gap, 1);
+  const fadeWindow = Math.min(RECENT, Math.max(24, speed * 10));
   ctx.font = '500 13px system-ui, sans-serif';
   ctx.textBaseline = 'top';
 
-  // Fills the cell at address x, skipping the padding after a matrix's last row
-  const fillCell = x => {
-    const M = Math.floor(x / STRIDE), idx = x - M * STRIDE;
-    if (idx >= N * N) return;
-    ctx.fillRect(M * (gw + GAP) + (idx % N) * cs, oy + Math.floor(idx / N) * cs, dot, dot);
+    const fillCell = x => {
+    const m = matOf(x), idx = x - base[m];
+    if (idx >= rows[m] * cols[m]) return;
+    const r = Math.floor(idx / cols[m]);
+    ctx.fillRect(ox[m] + (idx - r * cols[m]) * cs, oy + r * cs, dot, dot);
   };
 
-  // Fills a whole cache line, one rectangle per matrix row it touches
-  const fillLine = line => {
-    const start = line * L, M = Math.floor(start / STRIDE);
-    let idx = start - M * STRIDE;
-    const end = Math.min(idx + L, N * N);
+    const fillLine = line => {
+    const start = line * L, m = matOf(start), nc = cols[m];
+    let idx = start - base[m];
+    const end = Math.min(idx + L, rows[m] * nc);
     while (idx < end) {
-      const r = Math.floor(idx / N), c = idx - r * N, cEnd = Math.min(end, (r + 1) * N) - r * N;
-      ctx.fillRect(M * (gw + GAP) + c * cs, oy + r * cs, Math.max((cEnd - c) * cs - gap, 1), dot);
-      idx = r * N + cEnd;
+      const r = Math.floor(idx / nc), c = idx - r * nc, cEnd = Math.min(end, (r + 1) * nc) - r * nc;
+      ctx.fillRect(ox[m] + c * cs, oy + r * cs, Math.max((cEnd - c) * cs - gap, 1), dot);
+      idx = r * nc + cEnd;
     }
   };
 
-  // empty grids
-  ['A', 'B', 'C'].forEach((name, m) => {
-    const ox = m * (gw + GAP);
+    ['A', 'B', 'C'].forEach((name, m) => {
     ctx.fillStyle = muted;
-    ctx.fillText(name, ox, 0);
+    ctx.fillText(`${name}  ${rows[m]}×${cols[m]}`, ox[m], 0);
 
     ctx.globalAlpha = 0.35;
     ctx.fillStyle = border;
     if (gap) {
-      for (let r = 0; r < N; r++)
-        for (let c = 0; c < N; c++) ctx.fillRect(ox + c * cs, oy + r * cs, cs - 1, cs - 1);
+      for (let r = 0; r < rows[m]; r++)
+        for (let c = 0; c < cols[m]; c++) ctx.fillRect(ox[m] + c * cs, oy + r * cs, cs - 1, cs - 1);
     } else {
-      ctx.fillRect(ox, oy, gw, gw);      // cells too small to tell apart
+      ctx.fillRect(ox[m], oy, cols[m] * cs, rows[m] * cs);
     }
     ctx.globalAlpha = 1;
   });
 
-  // lines currently in the cache: L2 underneath, then L1 on top
-  if (real && 3 * STRIDE / L <= L2_DRAW_MAX) {
+    if (real && lay.end / L <= L2_DRAW_MAX) {
     ctx.fillStyle = color('--cached2');
     for (const line of sim.l2.lines()) fillLine(line);
   }
@@ -451,20 +461,18 @@ function draw() {
   }
   ctx.globalAlpha = 1;
 
-  // marks where each cache line starts. When N isn't a multiple of L, lines wrap
+  // marks where each cache line starts. When a row length isn't a multiple of L, lines wrap
   // from one row into the next, so the marks shift from row to row.
   if (gap) {
     ctx.strokeStyle = border;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let m = 0; m < 3; m++) {
-      const ox = m * (gw + GAP);
-      for (let r = 0; r < N; r++)
-        for (let c = (L - r * N % L) % L; c < N; c += L) {
-          ctx.moveTo(ox + c * cs - 0.5, oy + r * cs);
-          ctx.lineTo(ox + c * cs - 0.5, oy + (r + 1) * cs);
+    for (let m = 0; m < 3; m++)
+      for (let r = 0; r < rows[m]; r++)
+        for (let c = (L - r * cols[m] % L) % L; c < cols[m]; c += L) {
+          ctx.moveTo(ox[m] + c * cs - 0.5, oy + r * cs);
+          ctx.lineTo(ox[m] + c * cs - 0.5, oy + (r + 1) * cs);
         }
-    }
     ctx.stroke();
   }
 }
@@ -481,7 +489,10 @@ function loop() {
 
 // ---------- 7. Controls ----------
 const playBtn = document.getElementById('play');
-function updatePlayButton() { playBtn.textContent = playing ? 'Pause' : 'Play'; }
+function updatePlayButton() {
+  playBtn.textContent = playing ? 'Pause' : pos > 0 && pos < total ? 'Resume' : 'Play';
+  playBtn.dataset.state = playing ? 'playing' : 'paused';
+}
 
 playBtn.addEventListener('click', () => {
   if (pos >= total) reset();
@@ -498,35 +509,57 @@ function setMethod(m, andReset = true) {
   method = m;
   for (const k of ['ijk', 'ikj', 'tile'])
     document.getElementById('m' + k).setAttribute('aria-pressed', String(k === m));
-  document.getElementById('methodDesc').textContent = METHOD_DESC[m];
-  document.getElementById('tileLabel').style.opacity = document.getElementById('tile').style.opacity = m === 'tile' ? 1 : 0.5;
-  if (andReset) reset();
+  document.querySelector('.tilefield').classList.toggle('off', m !== 'tile');
+  document.getElementById('tile').disabled = m !== 'tile';
+  if (andReset) { reset(); renderComparison(); }
 }
 document.getElementById('mijk').addEventListener('click', () => setMethod('ijk'));
 document.getElementById('mikj').addEventListener('click', () => setMethod('ikj'));
 document.getElementById('mtile').addEventListener('click', () => setMethod('tile'));
 
-const sizeIn = document.getElementById('size');
+const dimIn = ['aR', 'aC', 'bR', 'bC'].map(id => document.getElementById(id));
+const dimStatus = document.getElementById('dimStatus');
 function updateDims() {
-  const bytes = N * N * 8;
+  const sz = (r, c) => `${r}×${c}`;
   document.getElementById('dims').textContent = mode === 'real'
-    ? `Line = ${L} doubles (128 B) · each ${N}×${N} matrix is ${fmtBytes(bytes)}, all three ${fmtBytes(3 * bytes)} · L1 128 KB, L2 16 MB`
-    : `Line = ${L} values, matrices ${N}×${N}`;
+    ? `Line = ${L} doubles (128 B) · A ${fmtBytes(M * K * 8)}, B ${fmtBytes(K * P * 8)}, C ${fmtBytes(M * P * 8)}, total ${fmtBytes((M * K + K * P + M * P) * 8)} · L1 128 KB, L2 16 MB`
+    : `Line = ${L} values · A ${sz(M, K)}, B ${sz(K, P)}, C ${sz(M, P)}`;
 }
+
+// Reads the four size boxes. Valid sizes rebuild the run; otherwise the page says why not and the
+// current run is left alone, with Play and Step switched off.
 function setSize() {
-  const m = MODES[mode];
-  N = Math.min(m.maxN, Math.max(N_MIN, Math.round(+sizeIn.value) || N));
-  sizeIn.value = N;
-  STRIDE = strideFor(N, L);
-  lastTime = new Float64Array(3 * STRIDE);   // reset() clears it
-  chunk = new Int32Array(2 * N + 1);  // the longest inner loop: 2N accesses plus 1
+  const max = MODES[mode].maxN;
+  const [aR, aC, bR, bC] = dimIn.map(el => Math.round(+el.value));
+  const problem = ![aR, aC, bR, bC].every(v => v >= 1 && v <= max)
+    ? `Every dimension must be a whole number from 1 to ${max}.`
+    : aC !== bR
+      ? `A can't be multiplied by B: A has ${aC} columns but B has ${bR} rows. They must match.`
+      : '';
+  dimStatus.textContent = problem;
+  dimStatus.classList.toggle('bad', !!problem);
+  for (const id of ['play', 'step']) document.getElementById(id).disabled = !!problem;
+  if (problem) {
+    playing = false;
+    updatePlayButton();
+    return;
+  }
+
+  M = aR; K = aC; P = bC;
+  lay = layoutFor(M, K, P, L);
+  lastTime = new Float64Array(lay.end);
+  chunk = new Int32Array(2 * Math.max(K, P) + 1);
   updateDims();
   resize();
   reset();
   startComparison();
 }
-const N_MIN = 2;
-sizeIn.addEventListener('change', setSize);
+const [aRIn, aCIn, bRIn, bCIn] = dimIn;
+dimIn.forEach(el => el.addEventListener('change', () => {
+  if (el === aCIn) bRIn.value = aCIn.value;
+  if (el === bRIn) aCIn.value = bRIn.value;
+  setSize();
+}));
 
 const tileSel = document.getElementById('tile');
 tileSel.addEventListener('change', () => {
@@ -554,7 +587,7 @@ document.getElementById('cap').addEventListener('input', e => {
   reset();
 });
 
-// Switching modes swaps the cache model, the line size and sensible defaults for N and the tile size
+// Switching modes swaps the cache model, the line size and sensible defaults for the matrix sizes and the tile size
 function setMode(next) {
   mode = next;
   const m = MODES[mode];
@@ -564,16 +597,21 @@ function setMode(next) {
   document.getElementById('modeBlurb').textContent = m.blurb;
   L = m.L;
   T = m.defaultT;
-  N = m.defaultN;
-  sizeIn.max = m.maxN;
-  sizeIn.value = N;
+  dimIn.forEach(el => { el.max = m.maxN; el.value = m.defaultN; });
   tileSel.innerHTML = m.tiles.map(t => `<option value="${t}"${t === T ? ' selected' : ''}>${t}×${t}</option>`).join('');
   buildCards();
   setMethod(method, false);
-  setSize();            // also resets
+  setSize();
 }
 document.getElementById('modeTeaching').addEventListener('click', () => mode !== 'teaching' && setMode('teaching'));
 document.getElementById('modeReal').addEventListener('click', () => mode !== 'real' && setMode('real'));
+
+window.addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest('input, select, textarea, button, summary')) return;
+  if (e.key === ' ') { e.preventDefault(); playBtn.click(); }
+  else if (e.key === 'ArrowRight') document.getElementById('step').click();
+  else if (e.key === 'r' || e.key === 'R') document.getElementById('reset').click();
+});
 
 window.addEventListener('resize', resize);
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { dirty = true; });

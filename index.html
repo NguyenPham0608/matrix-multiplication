@@ -7,94 +7,126 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body data-mode="teaching">
-  <main>
-    <header class="top">
-      <div>
-        <h1>Matrix multiplication cache simulator</h1>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <h1>Matrix multiplication <span>cache simulator</span></h1>
         <p class="sub" id="modeBlurb"></p>
       </div>
       <div class="seg mode" role="group" aria-label="Simulation mode">
         <button id="modeTeaching" aria-pressed="true">Teaching</button>
         <button id="modeReal" aria-pressed="false">Real <span class="chip">M5 MacBook Pro</span></button>
       </div>
-    </header>
+    </div>
+  </header>
 
-    <!-- Method choice and playback -->
-    <section class="panel">
-      <div class="row">
-        <div class="seg" role="group" aria-label="Multiplication method">
-          <button id="mijk" aria-pressed="true">Basic <span class="chip">i-j-k</span></button>
-          <button id="mikj" aria-pressed="false">Loop reordering <span class="chip">i-k-j</span></button>
-          <button id="mtile" aria-pressed="false">Tiled</button>
+  <main class="layout">
+    <aside class="side">
+      <section class="panel">
+        <h2>Method</h2>
+        <div class="methods" role="group" aria-label="Multiplication method">
+          <button id="mijk" class="method" title="Textbook triple loop. Each output element walks down a column of B, so every step lands on a new cache line." aria-pressed="true">
+            <span class="m-title">Basic <span class="chip">i-j-k</span></span>
+          </button>
+          <button id="mikj" class="method" title="Swaps the inner loops so B and C are walked along rows and every line that gets loaded is fully used." aria-pressed="false">
+            <span class="m-title">Loop reordering <span class="chip">i-k-j</span></span>
+          </button>
+          <button id="mtile" class="method" title="Works on small blocks at a time so the block in use stays in the cache while it is reused." aria-pressed="false">
+            <span class="m-title">Tiled</span>
+          </button>
         </div>
-      </div>
-      <p id="methodDesc" class="desc"></p>
+        <div class="field tilefield">
+          <label for="tile" id="tileLabel">Tile size</label>
+          <select id="tile"></select>
+        </div>
+      </section>
 
-      <div class="row">
-        <label for="size">N</label>
-        <input type="number" id="size" min="2" max="1024" step="1" value="16">
-        <label for="tile" id="tileLabel">Tile</label>
-        <select id="tile"></select>
-        <span class="spacer"></span>
-        <button id="play" class="primary">Play</button>
-        <button id="step">Step</button>
-        <button id="reset">Reset</button>
-      </div>
+      <section class="panel">
+        <h2>Matrices</h2>
+        <div class="dimgrid">
+          <span class="matlabel">A</span>
+          <input type="number" id="aR" min="1" max="1024" step="1" value="16" aria-label="Rows of A">
+          <span class="x">×</span>
+          <input type="number" id="aC" min="1" max="1024" step="1" value="16" aria-label="Columns of A">
 
-      <div class="row sliders">
-        <label for="speed">Speed</label>
-        <input type="range" id="speed" min="0" max="1000" step="1" value="391">
-        <span id="speedOut" class="out">12 / frame</span>
+          <span class="matlabel">B</span>
+          <input type="number" id="bR" min="1" max="1024" step="1" value="16" aria-label="Rows of B">
+          <span class="x">×</span>
+          <input type="number" id="bC" min="1" max="1024" step="1" value="16" aria-label="Columns of B">
+        </div>
+        <p id="dimStatus" class="status" role="status"></p>
+      </section>
 
-        <span class="teach-only sliderpair">
-          <label for="cap">Cache</label>
+      <section class="panel teach-only">
+        <h2>Cache</h2>
+        <div class="field">
+          <label for="cap">Capacity</label>
           <input type="range" id="cap" min="8" max="64" step="4" value="16">
           <span id="capOut" class="out">16 lines</span>
-        </span>
-      </div>
-    </section>
+        </div>
+      </section>
+    </aside>
 
-    <!-- The three matrices are drawn here -->
-    <section class="panel">
-      <div class="legend">
-        <span class="teach-only"><span class="sw hit"></span>Hit</span>
-        <span class="teach-only"><span class="sw miss"></span>Miss</span>
-        <span class="teach-only"><span class="sw cached"></span>In cache</span>
-        <span class="real-only"><span class="sw hit"></span>L1 hit</span>
-        <span class="real-only"><span class="sw l2"></span>L2 hit</span>
-        <span class="real-only"><span class="sw miss"></span>DRAM</span>
-        <span class="real-only"><span class="sw cached1"></span>In L1</span>
-        <span class="real-only"><span class="sw cached2"></span>In L2</span>
-      </div>
-      <canvas id="cv" aria-label="Grids for matrices A, B and C showing cache hits and misses"></canvas>
-      <p id="dims" class="muted"></p>
-    </section>
+    <div class="content">
+      <section class="panel stage">
+        <div class="stage-head">
+          <div class="legend">
+            <span class="teach-only"><span class="sw hit"></span>Hit</span>
+            <span class="teach-only"><span class="sw miss"></span>Miss</span>
+            <span class="teach-only"><span class="sw cached"></span>In cache</span>
+            <span class="real-only"><span class="sw hit"></span>L1 hit</span>
+            <span class="real-only"><span class="sw l2"></span>L2 hit</span>
+            <span class="real-only"><span class="sw miss"></span>DRAM</span>
+            <span class="real-only"><span class="sw cached1"></span>In L1</span>
+            <span class="real-only"><span class="sw cached2"></span>In L2</span>
+          </div>
+        </div>
 
-    <!-- Live counters -->
-    <div class="cards" id="cards"></div>
-    <p id="per" class="muted"></p>
+        <canvas id="cv" aria-label="Grids for matrices A, B and C showing cache hits and misses"></canvas>
+        <p id="dims" class="muted"></p>
 
-    <!-- What the real mode models -->
-    <section class="panel real-only" id="specs">
-      <h2>What "Real" models</h2>
-      <table class="specs">
-        <tbody>
-          <tr><th>Cache line</th><td>128 B, so 16 doubles</td><td><span class="tag measured">measured</span> <code>hw.cachelinesize</code></td></tr>
-          <tr><th>L1 data</th><td>128 KB, 8-way</td><td><span class="tag measured">size measured</span> <span class="tag assumed">ways assumed</span></td></tr>
-          <tr><th>L2</th><td>16 MB, 8-way</td><td><span class="tag measured">size measured</span> <span class="tag assumed">ways assumed</span></td></tr>
-          <tr><th>Replacement</th><td>LRU in every set</td><td><span class="tag assumed">assumed</span> real chips approximate LRU</td></tr>
-          <tr><th>Cost per access</th><td>L1 ≈ 4, L2 ≈ 18, DRAM ≈ 350 cycles</td><td><span class="tag assumed">rough estimates</span></td></tr>
-          <tr><th>Not modeled</th><td colspan="2">hardware prefetching, TLB, write-back of dirty lines, overlapping misses, SIMD, the system-level cache, other cores</td></tr>
-        </tbody>
-      </table>
-      <p class="muted">Sizes come from <code>sysctl</code> on an M5 (performance-core values). Each matrix is N×N 8-byte doubles, stored row by row and starting on a fresh line. Because sets are picked by address, power-of-two sizes like N = 512 make a column of B land in just a few sets, which causes conflict misses that the fully associative teaching cache can't show.</p>
-    </section>
+        <div class="progress" aria-hidden="true"><div id="progFill"></div></div>
 
-    <!-- Full-run comparison of all three methods -->
-    <section class="panel">
-      <h2 id="cmpTitle">Full run, all three methods, same cache</h2>
-      <div class="cmp" id="cmp"></div>
-    </section>
+        <div class="transport">
+          <button id="play" class="primary">Play</button>
+          <button id="step" title="Step one access (→)">Step</button>
+          <button id="reset" title="Reset (R)">Reset</button>
+          <div class="speed">
+            <label for="speed">Speed</label>
+            <input type="range" id="speed" min="0" max="1000" step="1" value="391">
+            <span id="speedOut" class="out">12 / frame</span>
+          </div>
+        </div>
+        <p class="keys"><kbd>Space</kbd> play / pause <kbd>→</kbd> step <kbd>R</kbd> reset</p>
+      </section>
+
+      <section class="panel">
+        <h2>Live counters</h2>
+        <div class="cards" id="cards"></div>
+        <div class="sharebar" id="share" aria-hidden="true"></div>
+        <p id="per" class="muted"></p>
+      </section>
+
+      <section class="panel">
+        <h2 id="cmpTitle">Full run, all three methods, same cache</h2>
+        <div class="cmp" id="cmp"></div>
+      </section>
+
+      <details class="panel real-only" id="specs" open>
+        <summary>What "Real" models</summary>
+        <table class="specs">
+          <tbody>
+            <tr><th>Cache line</th><td>128 B, so 16 doubles</td><td><span class="tag measured">measured</span> <code>hw.cachelinesize</code></td></tr>
+            <tr><th>L1 data</th><td>128 KB, 8-way</td><td><span class="tag measured">size measured</span> <span class="tag assumed">ways assumed</span></td></tr>
+            <tr><th>L2</th><td>16 MB, 8-way</td><td><span class="tag measured">size measured</span> <span class="tag assumed">ways assumed</span></td></tr>
+            <tr><th>Replacement</th><td>LRU in every set</td><td><span class="tag assumed">assumed</span> real chips approximate LRU</td></tr>
+            <tr><th>Cost per access</th><td>L1 ≈ 4, L2 ≈ 18, DRAM ≈ 350 cycles</td><td><span class="tag assumed">rough estimates</span></td></tr>
+            <tr><th>Not modeled</th><td colspan="2">hardware prefetching, TLB, write-back of dirty lines, overlapping misses, SIMD, the system-level cache, other cores</td></tr>
+          </tbody>
+        </table>
+        <p class="muted">Sizes come from <code>sysctl</code> on an M5 (performance-core values). Matrices are 8-byte doubles, stored row by row, each starting on a fresh line. Because sets are picked by address, power-of-two row lengths like 512 make a column of B land in just a few sets, which causes conflict misses that the fully associative teaching cache can't show.</p>
+      </details>
+    </div>
   </main>
 
   <script src="script.js"></script>
